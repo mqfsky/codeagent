@@ -1,8 +1,5 @@
 # Build outputs
-target/*
-!target/dist/
-!target/dist/**
-!target/minicode.jar
+target/
 *.class
 
 # IDE / editor
