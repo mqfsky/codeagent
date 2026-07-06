@@ -27,6 +27,7 @@ import minicode.model.ModelMetadataResolver;
 import minicode.model.anthropic.AnthropicModelAdapter;
 import minicode.model.anthropic.AnthropicModelsApiClient;
 import minicode.model.anthropic.HttpAnthropicTransport;
+import minicode.model.openai.OpenAIModelAdapter;
 import minicode.mcp.McpRuntime;
 import minicode.mcp.McpServerSummary;
 import minicode.mcp.McpToolHydrator;
@@ -176,14 +177,18 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                                              AgentEventSink eventSink,
                                              PermissionPromptHandler permissionPromptHandler) {
         Objects.requireNonNull(runtimeConfig, "runtimeConfig");
-        return createWithModelFactory(home, cwd, sessionId, eventSink, permissionPromptHandler, (registry, metadata) ->
-                runtimeConfig.provider() == ProviderKind.MOCK
-                        ? new MockModelAdapter("mock final")
-                        : new AnthropicModelAdapter(runtimeConfig, registry,
-                                new HttpAnthropicTransport(java.net.http.HttpClient.newHttpClient(),
-                                        runtimeConfig.providerTimeout()),
-                                Optional.of(resolveModelContextProfile(runtimeConfig, metadata).resolvedMaxOutputTokens())),
-                Optional.of(runtimeConfig));
+        return createWithModelFactory(home, cwd, sessionId, eventSink, permissionPromptHandler, (registry, metadata) -> {
+            if (runtimeConfig.provider() == ProviderKind.MOCK) {
+                return new MockModelAdapter("mock final");
+            }
+            if (runtimeConfig.provider() == ProviderKind.OPENAI_COMPATIBLE) {
+                return new OpenAIModelAdapter(runtimeConfig, registry);
+            }
+            return new AnthropicModelAdapter(runtimeConfig, registry,
+                    new HttpAnthropicTransport(java.net.http.HttpClient.newHttpClient(),
+                            runtimeConfig.providerTimeout()),
+                    Optional.of(resolveModelContextProfile(runtimeConfig, metadata).resolvedMaxOutputTokens()));
+        }, Optional.of(runtimeConfig));
     }
 
     public static ApplicationServices create(Path home, Path cwd, String sessionId, RuntimeConfig runtimeConfig,

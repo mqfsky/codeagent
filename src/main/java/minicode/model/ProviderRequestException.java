@@ -1,6 +1,4 @@
-package minicode.model.anthropic;
-
-import minicode.model.ModelRequestException;
+package minicode.model;
 
 import java.util.Optional;
 

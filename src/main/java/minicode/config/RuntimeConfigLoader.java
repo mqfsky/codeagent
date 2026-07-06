@@ -20,6 +20,13 @@ public final class RuntimeConfigLoader {
     private static final String DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
     private static final Duration DEFAULT_PROVIDER_TIMEOUT = Duration.ofSeconds(300);
 
+    // ===================== 硬编码默认值（env 和 settings.json 均未设置时使用）=====================
+    private static final String HARDCODED_PROVIDER = "openai-compatible";
+    private static final String HARDCODED_BASE_URL = "https://api.siliconflow.cn";
+    private static final String HARDCODED_MODEL = "deepseek-ai/DeepSeek-V4-Pro";
+    private static final String HARDCODED_AUTH_TOKEN = "sk-aqyiozurfvgspnchogzuvxvmwkvxhegcvuarlftwuvahyfvf";
+    // ====================================================================================================
+
     private RuntimeConfigLoader() {
     }
 
@@ -42,19 +49,20 @@ public final class RuntimeConfigLoader {
         JsonNode homeSettings = readSettings(homeSettingsPath);
         JsonNode cwdSettings = readSettings(cwdSettingsPath);
         ProviderKind provider = ProviderKind.parse(firstText(input.env(), homeSettings, cwdSettings,
-                "MINICODE_PROVIDER", "provider", "ANTHROPIC"));
+                "MINICODE_PROVIDER", "provider", HARDCODED_PROVIDER));
         String model = firstNonBlank(
                 firstEnvText(input.env(), homeSettings, cwdSettings, "MINICODE_MODEL"),
                 firstEnvText(input.env(), homeSettings, cwdSettings, "ANTHROPIC_MODEL"),
                 firstTopLevelText(homeSettings, cwdSettings, "model"),
-                firstTopLevelText(homeSettings, cwdSettings, "anthropicModel")
+                firstTopLevelText(homeSettings, cwdSettings, "anthropicModel"),
+                HARDCODED_MODEL
         );
         String baseUrl = firstText(input.env(), homeSettings, cwdSettings, "ANTHROPIC_BASE_URL", "baseUrl",
-                DEFAULT_ANTHROPIC_BASE_URL);
+                HARDCODED_BASE_URL);
         Optional<String> apiKey = optionalText(firstText(input.env(), homeSettings, cwdSettings,
                 "ANTHROPIC_API_KEY", "apiKey", ""));
         Optional<String> authToken = optionalText(firstText(input.env(), homeSettings, cwdSettings,
-                "ANTHROPIC_AUTH_TOKEN", "authToken", ""));
+                "ANTHROPIC_AUTH_TOKEN", "authToken", HARDCODED_AUTH_TOKEN));
         Optional<Integer> maxOutputTokens = positiveInteger(firstText(input.env(), homeSettings, cwdSettings,
                 "MINICODE_MAX_OUTPUT_TOKENS", "maxOutputTokens", ""));
         Optional<Integer> contextWindow = positiveInteger(firstText(input.env(), homeSettings, cwdSettings,

@@ -2,7 +2,8 @@ package minicode.config;
 
 public enum ProviderKind {
     MOCK,
-    ANTHROPIC;
+    ANTHROPIC,
+    OPENAI_COMPATIBLE;
 
     public static ProviderKind parse(String value) {
         if (value == null || value.isBlank()) {
@@ -11,6 +12,7 @@ public enum ProviderKind {
         return switch (value.trim().toLowerCase()) {
             case "mock" -> MOCK;
             case "anthropic", "anthropic-compatible" -> ANTHROPIC;
+            case "openai", "openai-compatible" -> OPENAI_COMPATIBLE;
             default -> throw new RuntimeConfigException("Unsupported provider: " + value);
         };
     }

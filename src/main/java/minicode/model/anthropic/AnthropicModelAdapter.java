@@ -9,6 +9,7 @@ import minicode.core.loop.ModelAdapter;
 import minicode.core.message.*;
 import minicode.core.step.*;
 import minicode.model.ProviderThinkingBlock;
+import minicode.model.ProviderRequestException;
 import minicode.model.ProviderUsage;
 import minicode.model.StepDiagnostics;
 import minicode.model.ModelLimits;

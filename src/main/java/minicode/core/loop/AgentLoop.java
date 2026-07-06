@@ -124,7 +124,11 @@ public final class AgentLoop {
 
     public AgentTurnResult runTurn(AgentTurnRequest request) {
         Objects.requireNonNull(request, "request");
+
+        // 本轮 turn 的工作副本：messages 会在 loop 中不断追加模型输出、工具调用和工具结果。
         List<ChatMessage> messages = new ArrayList<>(request.messages());
+
+        // AgentLoop 不直接写 session 文件，只收集持久化动作，最后交给调用方落盘。
         List<PersistenceAction> actions = new ArrayList<>();
         int emptyResponseCount = 0;
         int recoverableThinkingRetryCount = 0;
@@ -133,17 +137,27 @@ public final class AgentLoop {
 
         try {
             request.cancellationToken().throwIfCancellationRequested(CancellationPhase.BEFORE_TURN);
+
+            // 一个 turn 里可以有多个 step：每个 step 最多进行一次模型请求，并可能触发一组工具调用。
             for (int stepIndex = 0; stepIndex < request.maxSteps(); stepIndex++) {
+                // 模型请求前先处理上下文压力：统计 -> microcompact -> 再统计 -> 必要时 autoCompact。
+                // 统计
                 ContextStats preCompactStats = contextStatsCalculator.calculate(List.copyOf(messages));
+                // 压缩，轻量清理旧工具结果
                 messages = new ArrayList<>(contextManager.microcompact(List.copyOf(messages), preCompactStats));
+                // 再统计
                 ContextStats stats = contextStatsCalculator.calculate(List.copyOf(messages));
+                // 必要时让模型总结旧上下文
                 AutoCompactResult autoCompactResult = runAutoCompactPreflight(request.turnId(), messages, actions, stats);
                 if (autoCompactResult.status() == CompactStatus.COMPACTED) {
                     messages = new ArrayList<>(autoCompactResult.messages());
                     stats = contextStatsCalculator.calculate(List.copyOf(messages));
                 }
+                // 然后发布上下文状态事件,TUI 可以用它显示上下文占用情况。
                 publishEvent(new AgentEvent.ContextStatsEvent(request.turnId(), Instant.now(), stats));
                 request.cancellationToken().throwIfCancellationRequested(CancellationPhase.MODEL_REQUEST);
+
+                // 真正调用模型：Adapter 会把 messages 翻译成 provider 请求，并返回统一的 AgentStep。
                 AgentStep step;
                 try {
                     step = nextWithRetries(List.copyOf(messages), request.cancellationToken());
@@ -165,28 +179,36 @@ public final class AgentLoop {
                             "Model adapter returned null AgentStep",
                             NullPointerException.class.getName());
                 }
+                // 一共两种分支ToolCallsStep和AssistantStep
 
+                // 分支一：模型要求调用工具。先把 tool call 写入上下文，再执行工具并收集结果。
                 if (step instanceof ToolCallsStep toolCallsStep) {
+                    // 先记录模型说了什么
                     appendToolCallsStepProjection(request.turnId(), messages, actions, toolCallsStep);
                     request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
                     List<ToolResultMessage> toolResultMessages = new ArrayList<>();
 
+                    // 先记录所有工具调用，让下一次模型请求能看到 assistant 发起了哪些 tool_use。
                     for (int callIndex = 0; callIndex < toolCallsStep.calls().size(); callIndex++) {
                         ToolCall call = toolCallsStep.calls().get(callIndex);
+                        // 把每次 toolcall 变成 AssistantToolCallMessage
                         appendToolCallMessage(request.turnId(), messages, actions, call,
                                 callIndex == toolCallsStep.calls().size() - 1
                                         ? toolCallsStep.usage()
                                         : Optional.empty());
+                        // 发布事件给 UI 使得界面上能显示 tool call 操作
                         publishEvent(new AgentEvent.ToolStartedEvent(request.turnId(), Instant.now(),
                                 call.id(), call.toolName(), call.input()));
                         request.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
                     }
 
+                    // 再逐个执行工具；具体权限校验发生在 ToolRegistry/具体 Tool 内部。
                     for (ToolCall call : toolCallsStep.calls()) {
                         request.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
 
                         ToolResult result;
                         try {
+                            // 执行
                             result = toolExecutor.execute(call, createToolContext(request, call.id()));
                             request.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
                         } catch (CancellationRequestedException exception) {
@@ -204,10 +226,14 @@ public final class AgentLoop {
                         if (result.error()) {
                             toolErrorCount++;
                         }
+
+                        // 工具结果会变成 ToolResultMessage，追加回 messages，供下一轮 step 继续推理。
                         ToolResultMessage toolResultMessage = appendToolResultMessage(
                                 request.turnId(), messages, actions, call, result);
                         toolResultMessages.add(toolResultMessage);
                         request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
+
+                        // ask_user 这类工具会让 turn 暂停，等待用户补充输入后再继续。
                         if (result.awaitUser()) {
                             applyToolResultBudget(request.turnId(), messages, actions, toolResultMessages);
                             request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
@@ -220,17 +246,22 @@ public final class AgentLoop {
                             return AgentTurnResult.awaitUser(List.copyOf(messages), new TurnPersistencePlan(actions));
                         }
                     }
+
+                    // 工具输出可能很大，这里统一做预算控制，然后继续下一个 step 再问模型。
                     applyToolResultBudget(request.turnId(), messages, actions, toolResultMessages);
                     request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
                     continue;
                 }
 
+                // 分支二：模型没有要求工具调用，而是返回 assistant 文本或进度, assistantStep 说明模型返回的是文本类输出，不是工具调用。
+                // 防御性检查
                 if (!(step instanceof AssistantStep assistantStep)) {
                     return modelErrorResult(messages, actions,
                             "AgentLoop only supports AssistantStep and ToolCallsStep",
                             step.getClass().getName());
                 }
 
+                // thinking 被 max_tokens / pause_turn 截断时，不结束 turn，而是追加续跑提示继续推进。
                 if (isRecoverableThinkingStop(assistantStep) && recoverableThinkingRetryCount < 3) {
                     recoverableThinkingRetryCount++;
                     String stopReason = assistantStep.diagnostics().orElseThrow().stopReason().orElse("");
@@ -239,6 +270,7 @@ public final class AgentLoop {
                                     ? "Model hit max_tokens during thinking; requesting the next actionable step."
                                     : "Model returned pause_turn during thinking; requesting the next actionable step."
                     );
+                    // 追加原因，让模型继续跑
                     appendMessage(request.turnId(), messages, actions, progressMessage);
                     request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
                     appendMessage(request.turnId(), messages, actions, new UserMessage(
@@ -250,6 +282,7 @@ public final class AgentLoop {
                     continue;
                 }
 
+                // 空响应通常是 provider 或模型异常状态；有限重试后仍为空，就生成 fallback 结果结束。
                 if (assistantStep.content().isBlank()) {
                     emptyResponseCount++;
                     if (emptyResponseCount <= maxEmptyResponseRetries) {
@@ -262,6 +295,7 @@ public final class AgentLoop {
                     String fallbackReason = emptyFallbackReason(sawToolResultThisTurn, toolErrorCount);
                     AssistantMessage fallbackMessage = new AssistantMessage(
                             emptyFallbackMessage(sawToolResultThisTurn, toolErrorCount, assistantStep));
+                    // 添加消息
                     appendMessage(request.turnId(), messages, actions, fallbackMessage);
                     request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
                     return AgentTurnResult.emptyFallback(
@@ -276,9 +310,10 @@ public final class AgentLoop {
                             ))
                     );
                 }
-
+                // 重置次数
                 emptyResponseCount = 0;
 
+                // FINAL/UNSPECIFIED 表示本轮完成；PROGRESS 只是中间进展，需要追加续跑提示继续下一 step。
                 switch (assistantStep.kind()) {
                     case FINAL, UNSPECIFIED -> {
                         appendAssistantThinkingBlocks(request.turnId(), messages, actions, assistantStep);
@@ -306,9 +341,11 @@ public final class AgentLoop {
                 }
             }
 
+            // step 次数耗尽但还没 final，返回 MAX_STEPS，让上层提示用户是否继续。
             request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
             return AgentTurnResult.maxSteps(List.copyOf(messages), new TurnPersistencePlan(actions));
         } catch (CancellationRequestedException exception) {
+            // 任何阶段收到取消信号，都把当前 messages/actions 打包成 cancelled result 返回。
             return cancelledResult(request.turnId(), messages, actions, exception.cancellation());
         }
     }
@@ -394,6 +431,12 @@ public final class AgentLoop {
         return List.copyOf(retained);
     }
 
+    /**
+     * 将一条消息同时追加到内存上下文和本轮持久化计划中。
+     *
+     * <p>这是 loop 内部新增消息的统一入口：后续 step 中模型能看到这条消息，
+     * turn 结束后 session runner 能把它落盘，UI 也能通过事件流展示出来。</p>
+     */
     private void appendMessage(String turnId, List<ChatMessage> messages, List<PersistenceAction> actions,
                                ChatMessage message) {
         messages.add(message);
@@ -401,6 +444,12 @@ public final class AgentLoop {
         publishEvent(new AgentEvent.AssistantMessageEvent(turnId, Instant.now(), message));
     }
 
+    /**
+     * 如果 provider 返回了 thinking blocks，就把它们保存为独立的 assistant thinking 消息。
+     *
+     * <p>thinking 与普通 assistant 文本分开存放，后续 provider 请求可以按 provider
+     * 协议回放这些推理块，同时不把它们混进最终回答文本里。</p>
+     */
     private void appendAssistantThinkingBlocks(String turnId, List<ChatMessage> messages,
                                                List<PersistenceAction> actions, AssistantStep step) {
         if (!step.thinkingBlocks().isEmpty()) {
@@ -408,6 +457,13 @@ public final class AgentLoop {
         }
     }
 
+    /**
+     * 在真正执行工具之前，先把模型请求的工具调用记录进上下文。
+     *
+     * <p>生成的 {@link AssistantToolCallMessage} 对应 provider 返回的 tool_use block。
+     * 把它保存在 {@code messages} 中，下一次模型请求才能用同一个 tool call id
+     * 将工具结果和原始工具调用配对起来。</p>
+     */
     private void appendToolCallMessage(String turnId, List<ChatMessage> messages, List<PersistenceAction> actions,
                                        ToolCall call, Optional<minicode.model.ProviderUsage> usage) {
         AssistantToolCallMessage message = new AssistantToolCallMessage(
@@ -512,6 +568,13 @@ public final class AgentLoop {
                 .orElse("");
     }
 
+    /**
+     * 将 {@link ToolCallsStep} 中伴随工具调用返回的文本和 thinking blocks 投影为消息。
+     *
+     * <p>有些 provider 会在同一次响应里同时返回说明文本、进度文本和工具调用。
+     * 这个方法会在追加 tool_use 消息之前先保留这些文本；如果文本语义是 progress，
+     * 还会追加续跑提示，避免模型只汇报进度就停住。</p>
+     */
     private void appendToolCallsStepProjection(String turnId, List<ChatMessage> messages,
                                                List<PersistenceAction> actions, ToolCallsStep step) {
         step.content()

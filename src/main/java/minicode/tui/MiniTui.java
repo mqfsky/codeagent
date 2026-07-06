@@ -70,6 +70,7 @@ public final class MiniTui {
     public void runLoop() {
         try {
             String line;
+            // 1. 读用户输入：TUI 只负责不断读取一行文本，具体业务交给 runLine。
             while ((line = input.readLine()) != null) {
                 if (!runLine(line)) {
                     return;
@@ -96,15 +97,21 @@ public final class MiniTui {
             return true;
         }
 
+        // 2. 加载历史 messages：从最近一次 compact boundary 之后恢复可喂给模型的上下文。
         List<ChatMessage> history = services.sessionMessages();
+
+        // 3. 把本轮输入包装成 UserMessage，并先追加到 session，确保用户输入可恢复。
         UserMessage userMessage = new UserMessage(line);
         output.println("user: " + userMessage.content());
         services.sessionPersistenceRunner().apply(new TurnPersistencePlan(
                 List.of(new PersistenceAction.AppendMessagesAction(List.of(userMessage)))
         ));
 
+        // 4. 构造本轮 messages：历史上下文 + 本轮用户输入；turnRequest 会再补 fresh system prompt。
         List<ChatMessage> turnMessages = new java.util.ArrayList<>(history);
         turnMessages.add(userMessage);
+
+        // 5. 进入 Agent Loop：ApplicationServices 会包一层权限生命周期，再调用 agentLoop.runTurn。
         AgentTurnResult result = services.runTurn(services.turnRequest(List.copyOf(turnMessages), maxSteps));
         services.sessionPersistenceRunner().apply(result.persistencePlan());
         renderTurnResult(result);

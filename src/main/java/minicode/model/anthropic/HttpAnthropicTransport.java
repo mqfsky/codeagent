@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
+import minicode.model.ProviderRequestException;
 
 public final class HttpAnthropicTransport implements AnthropicTransport {
     private final HttpClient client;
