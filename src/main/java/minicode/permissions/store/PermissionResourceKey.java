@@ -5,6 +5,12 @@ import minicode.permissions.model.PermissionResource;
 import java.nio.file.Path;
 import java.util.Objects;
 
+/**
+ * 权限资源的持久化键。
+ *
+ * @param type 类型或事件类型
+ * @param fingerprint 资源指纹
+ */
 public record PermissionResourceKey(String type, String fingerprint) {
     public PermissionResourceKey {
         if (Objects.requireNonNull(type, "type").isBlank()) {

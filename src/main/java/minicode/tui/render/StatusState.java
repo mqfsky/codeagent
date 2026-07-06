@@ -3,6 +3,11 @@ package minicode.tui.render;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Renderer TUI 状态栏内容。
+ *
+ * @param text 输入文本
+ */
 public record StatusState(Optional<String> text) {
     public StatusState {
         text = Objects.requireNonNull(text, "text");

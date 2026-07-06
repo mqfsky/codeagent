@@ -6,6 +6,14 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 自动上下文压缩的执行结果。
+ *
+ * @param status 自动压缩执行状态
+ * @param messages 压缩或执行后的消息列表
+ * @param boundary 压缩边界；为空表示本次没有产生边界
+ * @param reason 原因说明；为空表示没有额外原因
+ */
 public record AutoCompactResult(CompactStatus status, List<ChatMessage> messages,
                                 Optional<CompressionBoundaryResult> boundary,
                                 Optional<String> reason) {

@@ -7,6 +7,21 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 模型 provider 和运行参数的配置快照。
+ *
+ * @param provider 模型 provider 类型
+ * @param model 模型名称
+ * @param baseUrl provider API 基础地址
+ * @param apiKey API key；为空表示未配置或由其他认证方式提供
+ * @param authToken 认证 token；为空表示未配置
+ * @param maxOutputTokens 配置的最大输出 token；为空表示按模型默认值解析
+ * @param contextWindow 配置的模型上下文窗口；为空表示按模型默认值解析
+ * @param maxSteps 单轮 turn 的最大 step 数；为空表示使用 TUI 默认值
+ * @param providerTimeout provider 请求超时时间
+ * @param sourceSummary 配置来源摘要
+ * @param mcpServers MCP server 配置列表
+ */
 public record RuntimeConfig(ProviderKind provider, String model, String baseUrl, Optional<String> apiKey,
                             Optional<String> authToken, Optional<Integer> maxOutputTokens,
                             Optional<Integer> contextWindow, Optional<Integer> maxSteps,

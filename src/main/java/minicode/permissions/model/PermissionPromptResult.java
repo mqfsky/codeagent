@@ -3,6 +3,13 @@ package minicode.permissions.model;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 用户对权限提示的选择结果。
+ *
+ * @param decision 用户或存储中的权限决策
+ * @param choiceKey 用户选择的选项 key；为空表示只携带决策
+ * @param feedback 用户拒绝时提供的反馈；为空表示没有反馈
+ */
 public record PermissionPromptResult(PermissionDecision decision, Optional<String> choiceKey,
                                      Optional<String> feedback) {
     public PermissionPromptResult {

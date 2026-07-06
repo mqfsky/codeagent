@@ -67,6 +67,28 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.ArrayList;
 
+/**
+ * 应用运行期的核心服务集合。
+ *
+ * @param toolRegistry 应用注册并暴露给模型的工具注册表
+ * @param permissionService 执行路径、命令、编辑和 MCP 调用前使用的权限服务
+ * @param contextManager 负责大工具输出替换和轻量上下文清理的上下文管理器
+ * @param sessionStore 读取和追加 session JSONL 日志的存储组件
+ * @param sessionPersistenceRunner 把持久化计划转换成 session 事件的执行器
+ * @param agentLoop 负责 model -> tool -> model 主流程的 AgentLoop
+ * @param modelAdapter 用于生成压缩摘要的模型适配器
+ * @param compactService 执行手动或自动上下文压缩的服务
+ * @param systemPromptBuilder 按当前环境生成系统提示词的构建器
+ * @param workspacePathResolver 解析和规范化 workspace 路径的组件
+ * @param skillRegistry 当前发现的技能注册表
+ * @param mcpRuntime 已启动或空的 MCP 运行时
+ * @param permissionStore 长期权限决策的存储组件
+ * @param permissionStorePath 权限存储文件路径
+ * @param home MiniCode 的数据目录
+ * @param cwd 当前 workspace 工作目录
+ * @param sessionId 当前会话 id
+ * @param runtimeConfig 运行配置；为空表示测试或无配置路径
+ */
 public record ApplicationServices(ToolRegistry toolRegistry,
                                   PermissionService permissionService,
                                   ContextManager contextManager,
@@ -312,7 +334,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                 UUID.randomUUID().toString(),
                 cwd,
                 sessionId,
-                withFreshSystemPrompt(messages),
+                withFreshSystemPrompt(messages), // 刷新 systemMessage
                 maxSteps,
                 Optional.empty()
         );
@@ -387,17 +409,33 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         return List.copyOf(retained);
     }
 
+    /**
+     * 为一次新的模型请求刷新系统提示词（systemMessage）。
+     *
+     * <p>系统提示词依赖当前运行环境，例如工作目录、已注册工具、已发现技能和 MCP 服务。
+     * 因此每次进入模型前都重新生成最新的 {@link SystemMessage}，并过滤掉历史消息中旧的
+     * system message，避免把过期的环境信息继续喂给模型。</p>
+     *
+     * @param messages 原始会话消息，可能包含历史 system message
+     * @return 以最新 system message 开头、且不包含旧 system message 的消息列表
+     */
     private List<ChatMessage> withFreshSystemPrompt(List<ChatMessage> messages) {
         List<ChatMessage> refreshed = new ArrayList<>();
+
+        // 先根据当前应用服务状态生成最新 system prompt，确保模型看到的是当前工具/技能/MCP 信息。
         refreshed.add(new SystemMessage(systemPromptBuilder.build(
                 new SystemPromptBuilder.Input(home, cwd, toolRegistry, skillRegistry.summaries(),
                         mcpRuntime.summaries())
         )));
+
+        // 再追加历史中的普通对话消息；旧 SystemMessage 会被跳过，避免重复或过期。
         for (ChatMessage message : messages) {
             if (!(message instanceof SystemMessage)) {
                 refreshed.add(message);
             }
         }
+
+        // 返回不可变副本，避免调用方继续修改这次模型请求的消息序列。
         return List.copyOf(refreshed);
     }
 }

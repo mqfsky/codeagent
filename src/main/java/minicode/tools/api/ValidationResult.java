@@ -6,6 +6,13 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 工具输入校验后的结果。
+ *
+ * @param valid 输入是否校验通过
+ * @param normalizedInput 规范化后的工具输入；为空表示校验失败或无规范化结果
+ * @param errors 校验错误列表
+ */
 public record ValidationResult(boolean valid, Optional<JsonNode> normalizedInput, List<String> errors) {
     public ValidationResult {
         normalizedInput = Objects.requireNonNull(normalizedInput, "normalizedInput");

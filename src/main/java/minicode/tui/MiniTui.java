@@ -89,9 +89,11 @@ public final class MiniTui {
             return true;
         }
         String trimmed = line.trim();
+        // 用于退出
         if ("exit".equalsIgnoreCase(trimmed) || "quit".equalsIgnoreCase(trimmed)) {
             return false;
         }
+        // 处理主动压缩指令
         if ("/compact".equals(trimmed)) {
             runCompactCommand();
             return true;
@@ -103,6 +105,7 @@ public final class MiniTui {
         // 3. 把本轮输入包装成 UserMessage，并先追加到 session，确保用户输入可恢复。
         UserMessage userMessage = new UserMessage(line);
         output.println("user: " + userMessage.content());
+        // 追加至 session
         services.sessionPersistenceRunner().apply(new TurnPersistencePlan(
                 List.of(new PersistenceAction.AppendMessagesAction(List.of(userMessage)))
         ));
@@ -113,6 +116,7 @@ public final class MiniTui {
 
         // 5. 进入 Agent Loop：ApplicationServices 会包一层权限生命周期，再调用 agentLoop.runTurn。
         AgentTurnResult result = services.runTurn(services.turnRequest(List.copyOf(turnMessages), maxSteps));
+        // 追加至 session
         services.sessionPersistenceRunner().apply(result.persistencePlan());
         renderTurnResult(result);
         return true;

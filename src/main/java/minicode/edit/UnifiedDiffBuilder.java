@@ -311,6 +311,14 @@ public final class UnifiedDiffBuilder {
         INSERT
     }
 
+    /**
+     * 统一 diff 构建过程中的单条差异。
+     *
+     * @param type 类型或事件类型
+     * @param text 输入文本
+     * @param oldIndex 旧文本中的索引
+     * @param newIndex 新文本中的索引
+     */
     private record DiffEntry(DiffType type, String text, int oldIndex, int newIndex) {
         boolean contributesToOld() {
             return type == DiffType.KEEP || type == DiffType.DELETE;
@@ -329,6 +337,12 @@ public final class UnifiedDiffBuilder {
         }
     }
 
+    /**
+     * 闭区间范围描述。
+     *
+     * @param start 起始位置
+     * @param endInclusive 闭区间结束位置
+     */
     private record Range(int start, int endInclusive) {
     }
 }

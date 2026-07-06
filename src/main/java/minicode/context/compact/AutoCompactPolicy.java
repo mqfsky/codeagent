@@ -1,5 +1,13 @@
 package minicode.context.compact;
 
+/**
+ * 自动上下文压缩的触发策略。
+ *
+ * @param utilizationThreshold 触发自动压缩的上下文使用率阈值
+ * @param maxFailures 自动压缩连续失败后允许的最大次数
+ * @param minEffectiveInput 尝试自动压缩前要求的最小有效输入 token
+ * @param failureCooldownPreflights 自动压缩失败后的预检冷却轮数
+ */
 public record AutoCompactPolicy(double utilizationThreshold, int maxFailures, long minEffectiveInput,
                                 int failureCooldownPreflights) {
     public AutoCompactPolicy {

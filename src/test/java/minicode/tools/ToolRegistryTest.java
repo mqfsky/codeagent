@@ -160,6 +160,13 @@ class ToolRegistryTest {
         return new ToolContext(Path.of("."), "session-1", Optional.of("turn-1"), Optional.of("tool-use-1"));
     }
 
+    /**
+     * 测试用的伪工具实现。
+     *
+     * @param name 名称
+     * @param validator 测试工具的输入校验函数
+     * @param runner 测试工具的执行函数
+     */
     private record FakeTool(String name, Validator validator, Runner runner) implements Tool {
         @Override
         public ToolMetadata metadata() {

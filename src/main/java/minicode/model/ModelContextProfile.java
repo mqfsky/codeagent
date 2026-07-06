@@ -3,6 +3,15 @@ package minicode.model;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 模型上下文能力的解析结果。
+ *
+ * @param contextWindow 模型上下文窗口大小
+ * @param outputReserve 为模型输出预留的 token 数量
+ * @param resolvedMaxOutputTokens 解析后的最大输出 token
+ * @param source 来源类型
+ * @param providerMaxOutputTokens provider 元数据返回的最大输出 token；为空表示未返回
+ */
 public record ModelContextProfile(long contextWindow, long outputReserve, int resolvedMaxOutputTokens, Source source,
                                   Optional<Integer> providerMaxOutputTokens) {
     public ModelContextProfile {

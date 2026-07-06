@@ -6,6 +6,19 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+/**
+ * 提交给权限提示处理器的请求。
+ *
+ * @param requestId 权限请求 id
+ * @param kind 类型枚举
+ * @param resource 请求访问的权限资源
+ * @param reason 原因说明；为空表示没有额外原因
+ * @param details 权限请求的用户可读详情
+ * @param choices 可供用户选择的权限选项
+ * @param feedbackAllowed 是否允许用户在拒绝时填写反馈
+ * @param scope 授权作用域
+ * @param context 发起权限请求时的会话和工具上下文
+ */
 public record PermissionRequest(String requestId, PermissionRequestKind kind, PermissionResource resource,
                                 String reason, PermissionRequestDetails details, List<PermissionChoice> choices,
                                 boolean feedbackAllowed, PermissionScope scope, PermissionContext context) {

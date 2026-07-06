@@ -8,6 +8,12 @@ import java.util.Optional;
 
 public sealed interface PermissionResource permits PermissionResource.PathResource,
         PermissionResource.CommandResource, PermissionResource.EditResource, PermissionResource.McpToolResource {
+    /**
+     * 路径访问权限资源。
+     *
+     * @param path 路径
+     * @param intent 路径访问意图
+     */
     record PathResource(Path path, PathIntent intent) implements PermissionResource {
         public PathResource {
             path = Objects.requireNonNull(path, "path");
@@ -15,6 +21,12 @@ public sealed interface PermissionResource permits PermissionResource.PathResour
         }
     }
 
+    /**
+     * 命令执行权限资源。
+     *
+     * @param signature 命令签名
+     * @param classification 命令安全分类
+     */
     record CommandResource(CommandSignature signature, CommandClassification classification) implements PermissionResource {
         public CommandResource {
             signature = Objects.requireNonNull(signature, "signature");
@@ -30,6 +42,12 @@ public sealed interface PermissionResource permits PermissionResource.PathResour
         MODIFY
     }
 
+    /**
+     * 文件编辑权限资源。
+     *
+     * @param review 编辑审查信息
+     * @param toolUseId 所属工具调用 id
+     */
     record EditResource(EditReview review, Optional<String> toolUseId) implements PermissionResource {
         public EditResource {
             review = Objects.requireNonNull(review, "review");
@@ -77,6 +95,14 @@ public sealed interface PermissionResource permits PermissionResource.PathResour
         }
     }
 
+    /**
+     * MCP 工具调用权限资源。
+     *
+     * @param serverName MCP server 名称
+     * @param toolName MCP 工具名称
+     * @param wrappedName 包装后的工具名称
+     * @param description 描述文本
+     */
     record McpToolResource(String serverName, String toolName, String wrappedName,
                            String description) implements PermissionResource {
         public McpToolResource {

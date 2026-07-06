@@ -281,6 +281,12 @@ public final class ListFilesTool implements Tool {
         }
     }
 
+    /**
+     * 目录遍历前的授权路径信息。
+     *
+     * @param normalizedBase 规范化后的授权基准路径；为空表示未授权
+     * @param realBase 解析符号链接后的真实基准路径；为空表示无法解析
+     */
     private record ListTraversalAuthorization(Optional<Path> normalizedBase, Optional<Path> realBase) {
         private static ListTraversalAuthorization none() {
             return new ListTraversalAuthorization(Optional.empty(), Optional.empty());

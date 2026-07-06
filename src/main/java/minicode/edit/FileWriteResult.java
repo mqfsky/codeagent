@@ -5,6 +5,13 @@ import minicode.permissions.model.PermissionResource;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 文件写入操作的执行结果。
+ *
+ * @param noOp 是否没有实际写入变化
+ * @param operation 文件编辑操作类型；为空表示未执行编辑
+ * @param message 结果说明消息
+ */
 public record FileWriteResult(boolean noOp, Optional<PermissionResource.EditOperation> operation, String message) {
     public FileWriteResult {
         operation = Objects.requireNonNull(operation, "operation");

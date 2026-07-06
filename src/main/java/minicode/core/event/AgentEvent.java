@@ -19,6 +19,13 @@ public sealed interface AgentEvent permits AgentEvent.AssistantMessageEvent, Age
 
     Instant timestamp();
 
+    /**
+     * Agent 追加助手侧消息时发布的事件。
+     *
+     * @param turnId 所属 turn id
+     * @param timestamp 事件产生时间
+     * @param message 新追加的消息
+     */
     record AssistantMessageEvent(String turnId, Instant timestamp, ChatMessage message) implements AgentEvent {
         public AssistantMessageEvent {
             requireEvent(turnId, timestamp);
@@ -26,6 +33,15 @@ public sealed interface AgentEvent permits AgentEvent.AssistantMessageEvent, Age
         }
     }
 
+    /**
+     * 工具开始执行时发布的事件。
+     *
+     * @param turnId 所属 turn id
+     * @param timestamp 事件产生时间
+     * @param toolUseId 工具调用 id
+     * @param toolName 工具名称
+     * @param input 工具输入 JSON
+     */
     record ToolStartedEvent(String turnId, Instant timestamp, String toolUseId, String toolName,
                             JsonNode input) implements AgentEvent {
         public ToolStartedEvent {
@@ -36,6 +52,17 @@ public sealed interface AgentEvent permits AgentEvent.AssistantMessageEvent, Age
         }
     }
 
+    /**
+     * 工具执行完成时发布的事件。
+     *
+     * @param turnId 所属 turn id
+     * @param timestamp 事件产生时间
+     * @param toolUseId 工具调用 id
+     * @param toolName 工具名称
+     * @param error 工具是否执行失败
+     * @param awaitUser 工具结果是否要求等待用户补充输入
+     * @param replacement 大工具输出被替换时的存储记录；为空表示未替换
+     */
     record ToolFinishedEvent(String turnId, Instant timestamp, String toolUseId, String toolName,
                              boolean error, boolean awaitUser,
                              Optional<ToolResultReplacementRecord> replacement) implements AgentEvent {
@@ -47,6 +74,13 @@ public sealed interface AgentEvent permits AgentEvent.AssistantMessageEvent, Age
         }
     }
 
+    /**
+     * 上下文窗口统计刷新时发布的事件。
+     *
+     * @param turnId 所属 turn id
+     * @param timestamp 事件产生时间
+     * @param stats 当前上下文 token 统计
+     */
     record ContextStatsEvent(String turnId, Instant timestamp, ContextStats stats) implements AgentEvent {
         public ContextStatsEvent {
             requireEvent(turnId, timestamp);
@@ -54,6 +88,15 @@ public sealed interface AgentEvent permits AgentEvent.AssistantMessageEvent, Age
         }
     }
 
+    /**
+     * 自动上下文压缩流程状态变化时发布的事件。
+     *
+     * @param turnId 所属 turn id
+     * @param timestamp 事件产生时间
+     * @param type 自动压缩事件类型
+     * @param result 压缩完成时的结果；未完成时为空
+     * @param reason 跳过或失败原因；没有原因时为空
+     */
     record AutoCompactEvent(String turnId, Instant timestamp, AutoCompactEventType type,
                             Optional<CompressionResult> result, Optional<String> reason) implements AgentEvent {
         public AutoCompactEvent {
@@ -70,6 +113,14 @@ public sealed interface AgentEvent permits AgentEvent.AssistantMessageEvent, Age
         }
     }
 
+    /**
+     * 工具请求等待用户输入时发布的事件。
+     *
+     * @param turnId 所属 turn id
+     * @param timestamp 事件产生时间
+     * @param toolUseId 触发等待的工具调用 id
+     * @param question 展示给用户的问题
+     */
     record AwaitUserEvent(String turnId, Instant timestamp, String toolUseId, String question) implements AgentEvent {
         public AwaitUserEvent {
             requireEvent(turnId, timestamp);
@@ -78,6 +129,13 @@ public sealed interface AgentEvent permits AgentEvent.AssistantMessageEvent, Age
         }
     }
 
+    /**
+     * turn 被取消时发布的事件。
+     *
+     * @param turnId 所属 turn id
+     * @param timestamp 事件产生时间
+     * @param cancellation 取消来源、阶段和原因
+     */
     record TurnCancelledEvent(String turnId, Instant timestamp, TurnCancellation cancellation) implements AgentEvent {
         public TurnCancelledEvent {
             requireEvent(turnId, timestamp);

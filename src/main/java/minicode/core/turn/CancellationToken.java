@@ -54,6 +54,12 @@ public final class CancellationToken {
         });
     }
 
+    /**
+     * 取消请求的来源和原因。
+     *
+     * @param source 取消请求来源
+     * @param reason 原因说明；为空表示没有额外原因
+     */
     private record CancellationRequest(CancellationSource source, String reason) {
         private CancellationRequest {
             source = Objects.requireNonNull(source, "source");

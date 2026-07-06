@@ -376,6 +376,12 @@ public final class AnthropicModelAdapter implements ModelAdapter {
         }
     }
 
+    /**
+     * 从 provider 响应中解析出的文本片段。
+     *
+     * @param content 解析出的文本内容
+     * @param kind 类型枚举
+     */
     private record ParsedText(String content, AssistantKind kind) {
     }
 }

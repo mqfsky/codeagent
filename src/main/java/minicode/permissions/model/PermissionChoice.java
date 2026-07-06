@@ -2,6 +2,14 @@ package minicode.permissions.model;
 
 import java.util.Objects;
 
+/**
+ * 一次权限提示中的可选决策。
+ *
+ * @param key 选择项或资源键
+ * @param label 展示给用户的选项文案
+ * @param decision 用户或存储中的权限决策
+ * @param requiresFeedback 该选择是否要求用户提供反馈
+ */
 public record PermissionChoice(String key, String label, PermissionDecision decision, boolean requiresFeedback) {
     public PermissionChoice {
         if (Objects.requireNonNull(key, "key").isBlank()) {

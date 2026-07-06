@@ -89,6 +89,12 @@ public final class ModelLimits {
         return new ContextRule(patterns, new ContextWindow(contextWindow, outputReserve));
     }
 
+    /**
+     * 模型上下文窗口规则。
+     *
+     * @param contextWindow 模型上下文窗口大小
+     * @param outputReserve 为模型输出预留的 token 数量
+     */
     public record ContextWindow(long contextWindow, long outputReserve) {
         public ContextWindow {
             if (contextWindow <= 0 || outputReserve < 0) {
@@ -97,6 +103,12 @@ public final class ModelLimits {
         }
     }
 
+    /**
+     * 模型最大输出 token 限制。
+     *
+     * @param defaultValue 默认最大输出 token
+     * @param upperLimit 允许配置的最大输出 token 上限
+     */
     private record MaxOutputTokens(int defaultValue, int upperLimit) {
         private MaxOutputTokens {
             if (defaultValue <= 0 || upperLimit <= 0) {
@@ -105,6 +117,12 @@ public final class ModelLimits {
         }
     }
 
+    /**
+     * 按模型名称匹配的最大输出规则。
+     *
+     * @param patterns 用于匹配模型名称的规则列表
+     * @param limits 匹配后采用的输出限制
+     */
     private record MaxOutputRule(List<String> patterns, MaxOutputTokens limits) {
         private MaxOutputRule {
             patterns = List.copyOf(patterns);
@@ -116,6 +134,12 @@ public final class ModelLimits {
         }
     }
 
+    /**
+     * 按模型名称匹配的上下文窗口规则。
+     *
+     * @param patterns 用于匹配模型名称的规则列表
+     * @param window 匹配后采用的上下文窗口配置
+     */
     private record ContextRule(List<String> patterns, ContextWindow window) {
         private ContextRule {
             patterns = List.copyOf(patterns);

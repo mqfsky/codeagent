@@ -12,6 +12,13 @@ public interface AnthropicTransport {
         throw new UnsupportedOperationException("GET is not supported by this transport");
     }
 
+    /**
+     * HTTP transport 返回的响应数据。
+     *
+     * @param statusCode HTTP 状态码
+     * @param headers HTTP 响应头
+     * @param body 正文内容
+     */
     record Response(int statusCode, Map<String, List<String>> headers, String body) {
         public boolean ok() {
             return statusCode >= 200 && statusCode < 300;

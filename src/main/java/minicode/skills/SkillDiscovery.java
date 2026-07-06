@@ -136,9 +136,21 @@ public final class SkillDiscovery {
         return "";
     }
 
+    /**
+     * 技能文件 front matter 和正文的切分结果。
+     *
+     * @param frontMatter front matter 文本
+     * @param body 正文内容
+     */
     private record FrontMatterSplit(String frontMatter, String body) {
     }
 
+    /**
+     * 技能根目录及其来源。
+     *
+     * @param path 路径
+     * @param source 来源类型
+     */
     private record SkillRoot(Path path, SkillSource source) {
         private SkillRoot {
             path = Objects.requireNonNull(path, "path");

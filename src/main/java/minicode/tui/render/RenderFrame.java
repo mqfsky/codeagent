@@ -3,6 +3,15 @@ package minicode.tui.render;
 import java.util.List;
 import java.util.Objects;
 
+/**
+ * Renderer TUI 的一帧渲染结果。
+ *
+ * @param width 宽度
+ * @param height 高度
+ * @param lines 要渲染的文本行
+ * @param cursorRow 光标所在行
+ * @param cursorColumn 光标所在列
+ */
 public record RenderFrame(int width, int height, List<String> lines, int cursorRow, int cursorColumn) {
     public RenderFrame(int width, int height, List<String> lines) {
         this(width, height, lines, 0, 0);

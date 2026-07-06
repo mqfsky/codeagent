@@ -5,6 +5,15 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Renderer TUI 的整体渲染状态。
+ *
+ * @param transcript 转写区域内容块列表
+ * @param status 状态栏内容
+ * @param input 输入框状态
+ * @param scrollOffset 滚动偏移量
+ * @param contextBadge 上下文占用徽标文本；为空表示不展示
+ */
 public record RenderState(List<TranscriptBlock> transcript, StatusState status, InputState input, int scrollOffset,
                           Optional<String> contextBadge) {
     public RenderState {

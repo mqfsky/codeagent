@@ -30,6 +30,13 @@ public final class RuntimeConfigLoader {
     private RuntimeConfigLoader() {
     }
 
+    /**
+     * 方法调用所需的输入参数集合。
+     *
+     * @param home MiniCode 的数据目录
+     * @param cwd 当前 workspace 工作目录
+     * @param env 环境变量映射
+     */
     public record Input(Path home, Path cwd, Map<String, String> env) {
         public Input {
             home = Objects.requireNonNull(home, "home").toAbsolutePath().normalize();

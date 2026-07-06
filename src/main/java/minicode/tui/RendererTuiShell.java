@@ -741,6 +741,13 @@ public final class RendererTuiShell {
         return value;
     }
 
+    /**
+     * Renderer TUI 中等待用户选择的权限请求。
+     *
+     * @param request 待用户确认的权限请求
+     * @param future 等待用户权限选择完成的 future
+     * @param feedbackChoice 当前是否处于需要反馈的拒绝选项
+     */
     private record PendingPermission(PermissionRequest request, CompletableFuture<PermissionPromptResult> future,
                                      Optional<PermissionChoice> feedbackChoice) {
         private PendingPermission {

@@ -61,6 +61,11 @@ class McpBackedToolTest {
         return root;
     }
 
+    /**
+     * 测试用的静态 MCP client。
+     *
+     * @param result 执行结果；为空表示未完成或未产生结果
+     */
     private record StaticMcpClient(JsonNode result) implements McpClient {
         @Override
         public void start() {

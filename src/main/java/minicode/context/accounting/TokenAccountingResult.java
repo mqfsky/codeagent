@@ -3,6 +3,20 @@ package minicode.context.accounting;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 一次 token 统计的结果。
+ *
+ * @param inputTokens 输入 token 数量
+ * @param outputTokens 输出 token 数量
+ * @param totalTokens 总 token 数量
+ * @param providerUsageTokens 直接来自 provider usage 的 token 数量
+ * @param estimatedTokens 本地估算补齐的 token 数量
+ * @param isExact 统计是否完全来自 provider 精确用量
+ * @param source token 统计来源
+ * @param usageBoundary provider 用量归属的消息边界；估算-only 时为空
+ * @param stale 用量信息是否已经失效
+ * @param reason 原因说明；为空表示没有额外原因
+ */
 public record TokenAccountingResult(long inputTokens, long outputTokens, long totalTokens,
                                     long providerUsageTokens, long estimatedTokens, boolean isExact,
                                     TokenAccountingSource source, Optional<UsageBoundary> usageBoundary,

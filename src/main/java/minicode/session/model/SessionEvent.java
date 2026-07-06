@@ -7,6 +7,20 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * 会话日志中的一条事件。
+ *
+ * @param type 类型或事件类型
+ * @param uuid 事件 uuid
+ * @param timestamp 事件或数据生成时间
+ * @param sessionId 当前会话 id
+ * @param cwd 当前 workspace 工作目录
+ * @param parentUuid 物理父事件 uuid；为空表示没有
+ * @param logicalParentUuid 逻辑父事件 uuid；为空表示没有
+ * @param message 结果说明消息
+ * @param meta 会话元事件草稿；为空表示普通消息事件
+ * @param compactMetadata 压缩元数据；为空表示非压缩边界事件
+ */
 public record SessionEvent(SessionEventType type, String uuid, Instant timestamp, String sessionId, String cwd,
                            Optional<String> parentUuid, Optional<String> logicalParentUuid,
                            Optional<ChatMessage> message, Optional<MetaSessionEventDraft> meta,

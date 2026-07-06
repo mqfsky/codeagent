@@ -2,6 +2,13 @@ package minicode.tui.render;
 
 import java.util.Objects;
 
+/**
+ * Renderer TUI 输入框状态。
+ *
+ * @param mode 输入模式
+ * @param text 输入文本
+ * @param cursor 光标位置
+ */
 public record InputState(Mode mode, String text, int cursor) {
     public InputState {
         mode = Objects.requireNonNull(mode, "mode");

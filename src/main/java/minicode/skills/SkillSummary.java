@@ -3,6 +3,14 @@ package minicode.skills;
 import java.nio.file.Path;
 import java.util.Objects;
 
+/**
+ * 技能在系统提示词中的摘要。
+ *
+ * @param name 名称
+ * @param description 描述文本
+ * @param path 路径
+ * @param source 来源类型
+ */
 public record SkillSummary(String name, String description, Path path, SkillSource source) {
     public SkillSummary {
         name = requireText(name, "name");

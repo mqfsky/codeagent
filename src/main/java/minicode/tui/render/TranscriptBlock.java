@@ -3,6 +3,16 @@ package minicode.tui.render;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Renderer TUI 转写区域的一块内容。
+ *
+ * @param kind 类型枚举
+ * @param id 唯一标识
+ * @param text 输入文本
+ * @param toolUseId 所属工具调用 id
+ * @param toolName 工具名称；为空表示该展示块不关联工具
+ * @param toolStatus 工具展示状态；为空表示该块没有工具状态
+ */
 public record TranscriptBlock(Kind kind, String id, String text, Optional<String> toolUseId,
                               Optional<String> toolName, Optional<ToolStatus> toolStatus) {
     public TranscriptBlock {

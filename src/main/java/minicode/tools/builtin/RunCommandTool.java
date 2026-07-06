@@ -420,6 +420,13 @@ public final class RunCommandTool implements Tool {
         return schema;
     }
 
+    /**
+     * 本地命令执行后的输出结果。
+     *
+     * @param exitCode 命令退出码
+     * @param stdout 标准输出内容
+     * @param stderr 标准错误内容
+     */
     private record CommandOutput(int exitCode, String stdout, String stderr) {
     }
 }

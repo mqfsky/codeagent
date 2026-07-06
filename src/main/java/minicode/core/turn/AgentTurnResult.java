@@ -7,9 +7,16 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-
-
-
+/**
+ * Agent 执行一轮 turn 后返回的结果。
+ *
+ * <p>结果同时包含最新消息上下文、需要持久化的动作，以及本轮停止原因和可选细节。</p>
+ *
+ * @param messages 本轮结束后的完整消息列表
+ * @param persistencePlan 本轮需要追加到 session 日志的持久化计划
+ * @param stopReason 本轮停止原因
+ * @param stopDetails 与停止原因匹配的附加细节；普通完成、等待用户和达到步数上限时为空
+ */
 public record AgentTurnResult(List<ChatMessage> messages, TurnPersistencePlan persistencePlan,
                               AgentTurnStopReason stopReason, Optional<AgentTurnStopDetails> stopDetails) {
     public AgentTurnResult {

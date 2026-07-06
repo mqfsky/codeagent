@@ -277,6 +277,14 @@ public class ContextManager {
         }
     }
 
+    /**
+     * 大工具输出替换记录的缓存键。
+     *
+     * @param toolUseId 所属工具调用 id
+     * @param toolName 工具名称
+     * @param contentHash 原始内容的哈希值
+     * @param trigger 压缩触发来源
+     */
     private record ReplacementCacheKey(String toolUseId, String toolName, String contentHash,
                                        ToolResultReplacementTrigger trigger) {
         private ReplacementCacheKey {

@@ -14,6 +14,15 @@ import java.util.Objects;
 import java.util.StringJoiner;
 
 public final class SystemPromptBuilder {
+    /**
+     * 方法调用所需的输入参数集合。
+     *
+     * @param home MiniCode 的数据目录
+     * @param cwd 当前 workspace 工作目录
+     * @param tools 当前可暴露给模型的工具注册表
+     * @param skills 当前发现的技能摘要列表
+     * @param mcpServers MCP server 配置列表
+     */
     public record Input(Path home, Path cwd, ToolRegistry tools, List<SkillSummary> skills,
                         List<McpServerSummary> mcpServers) {
         public Input(Path home, Path cwd, ToolRegistry tools) {

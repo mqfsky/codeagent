@@ -3,6 +3,13 @@ package minicode.tui.input;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * TUI 输入层产生的事件。
+ *
+ * @param kind 类型枚举
+ * @param character 输入字符；为空表示事件不携带单字符
+ * @param text 输入文本
+ */
 public record TuiInputEvent(Kind kind, Optional<Character> character, Optional<String> text) {
     public TuiInputEvent {
         kind = Objects.requireNonNull(kind, "kind");
