@@ -17,6 +17,7 @@ public final class ContextStatsCalculator {
     }
 
     public ContextStats calculate(List<ChatMessage> messages) {
+        //  统计 token
         TokenAccountingResult accounting = accountingService.account(messages);
         double utilization = Math.min(1.0d, (double) accounting.totalTokens() / (double) window.effectiveInput());
         return new ContextStats(accounting, window.contextWindow(), window.outputReserve(), window.effectiveInput(),

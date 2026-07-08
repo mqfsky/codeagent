@@ -37,40 +37,49 @@ public final class AutoCompactController {
         List<ChatMessage> actualMessages = List.copyOf(Objects.requireNonNull(messages, "messages"));
         Objects.requireNonNull(stats, "stats");
         return enabled
-                && stats.effectiveInput() >= policy.minEffectiveInput()
-                && stats.utilization() >= policy.utilizationThreshold()
-                && ContextBoundaryGuard.isCompactSafeBoundary(actualMessages)
-                && cooldownRemaining == 0;
+                && stats.effectiveInput() >= policy.minEffectiveInput() // 有效输入窗口
+                && stats.utilization() >= policy.utilizationThreshold() // 上下文占用
+                && ContextBoundaryGuard.isCompactSafeBoundary(actualMessages) // 检查工具调用是不是完整闭合
+                && cooldownRemaining == 0; // 失败冷却计数器，自动压缩失败后，不要每次模型请求前都立刻再尝试压缩，而是先跳过几轮 preflight
     }
 
     public AutoCompactResult preflight(List<ChatMessage> messages, ContextStats stats, ModelAdapter modelAdapter) {
         List<ChatMessage> actualMessages = List.copyOf(Objects.requireNonNull(messages, "messages"));
         Objects.requireNonNull(stats, "stats");
         Objects.requireNonNull(modelAdapter, "modelAdapter");
+
         if (!enabled) {
             return AutoCompactResult.skipped(actualMessages, "auto compact disabled");
         }
+        // effectiveInput 太小 skipped
         if (stats.effectiveInput() < policy.minEffectiveInput()) {
             resetFailures();
             return AutoCompactResult.skipped(actualMessages, "effective input window is below auto compact minimum");
         }
+        // utilization 低于阈值 skipped
         if (stats.utilization() < policy.utilizationThreshold()) {
             resetFailures();
             return AutoCompactResult.skipped(actualMessages, "context utilization is below auto compact threshold");
         }
+        // 工具调用边界不安全 skipped
         if (!ContextBoundaryGuard.isCompactSafeBoundary(actualMessages)) {
             return AutoCompactResult.skipped(actualMessages, "unsafe compact boundary: incomplete tool round");
         }
+        // cooldown 中 skipped，避免频繁压缩
         if (cooldownRemaining > 0) {
             cooldownRemaining--;
             return AutoCompactResult.skipped(actualMessages, "auto compact cooldown after previous failure");
         }
 
+        // 开始压缩
         ManualCompactResult result = compactService.compact(new CompactRequest(actualMessages, modelAdapter,
                 CompactTrigger.AUTO));
+
+        // 压缩结果判断
         if (result.status() == CompactStatus.COMPACTED) {
             consecutiveFailures = 0;
             cooldownRemaining = 0;
+            // 包装成自动压缩结果
             return AutoCompactResult.compacted(result.messages(), result.boundary().orElseThrow());
         }
         if (result.status() == CompactStatus.FAILED) {

@@ -13,6 +13,11 @@ public final class ContextBoundaryGuard {
     private ContextBoundaryGuard() {
     }
 
+    /**
+     * 遍历 message，检查工具调用是不是完整闭合，toolcall 和 toolresult message是否成对出现
+     * @param messages
+     * @return
+     */
     public static boolean isCompactSafeBoundary(List<ChatMessage> messages) {
         List<ChatMessage> actualMessages = List.copyOf(Objects.requireNonNull(messages, "messages"));
         if (actualMessages.isEmpty()) {
@@ -20,11 +25,13 @@ public final class ContextBoundaryGuard {
         }
         Set<String> openToolCalls = new HashSet<>();
         Set<String> completedToolCalls = new HashSet<>();
+
         for (ChatMessage message : actualMessages) {
             if (message instanceof AssistantToolCallMessage toolCall) {
                 if (openToolCalls.contains(toolCall.toolUseId()) || completedToolCalls.contains(toolCall.toolUseId())) {
                     return false;
                 }
+                // 加入未闭合
                 openToolCalls.add(toolCall.toolUseId());
             } else if (message instanceof ToolResultMessage toolResult) {
                 if (!openToolCalls.remove(toolResult.toolUseId())) {

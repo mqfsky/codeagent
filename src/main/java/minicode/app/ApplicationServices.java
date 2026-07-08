@@ -168,6 +168,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         WorkspacePathResolver workspacePathResolver = new WorkspacePathResolver();
         SkillRegistry skillRegistry = new SkillRegistry(new SkillDiscovery(actualHome, actualCwd).discover());
 
+        // 注册工具
         ToolRegistry registry = createBuiltInToolRegistry(permissionService, workspacePathResolver, skillRegistry);
 
         ContextManager contextManager = new ContextManager(
@@ -236,6 +237,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         WorkspacePathResolver workspacePathResolver = new WorkspacePathResolver();
         SkillRegistry skillRegistry = new SkillRegistry(new SkillDiscovery(actualHome, actualCwd).discover());
 
+        // 注册工具
         ToolRegistry registry = createBuiltInToolRegistry(permissionService, workspacePathResolver, skillRegistry);
         McpRuntime mcpRuntime = runtimeConfig
                 .map(config -> McpToolHydrator.hydrate(config.mcpServers(), permissionService, actualCwd))
@@ -329,12 +331,24 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         return registry;
     }
 
+    /**
+     * 为一次新的 Agent turn 构造请求对象。
+     *
+     * <p>调用方传入当前会话消息和最大 step 数后，这里会生成新的 turn id，
+     * 绑定当前 {@code cwd} 与 {@code sessionId}，并在消息列表前刷新最新的系统提示词。
+     * 返回的 {@link AgentTurnRequest} 会被继续交给 {@link #runTurn(AgentTurnRequest)} 执行。</p>
+     *
+     * @param messages 本轮要发送给模型的会话消息，通常包含历史消息和当前用户输入
+     * @param maxSteps 本轮最多允许执行的模型/工具 step 数量
+     * @return 带有新 turn id、当前会话信息和最新 system prompt 的 turn 请求
+     */
     public AgentTurnRequest turnRequest(List<ChatMessage> messages, int maxSteps) {
         return new AgentTurnRequest(
                 UUID.randomUUID().toString(),
                 cwd,
                 sessionId,
-                withFreshSystemPrompt(messages), // 刷新 systemMessage
+                // 每次进入模型前都刷新 system prompt，避免工具、技能或 MCP 信息过期。
+                withFreshSystemPrompt(messages),
                 maxSteps,
                 Optional.empty()
         );
@@ -342,6 +356,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
 
     public AgentTurnResult runTurn(AgentTurnRequest request) {
         AgentTurnRequest actualRequest = Objects.requireNonNull(request, "request");
+        // 刷新 prompt，保证 message 里是最新的 prompt
         actualRequest = new AgentTurnRequest(
                 actualRequest.turnId(),
                 actualRequest.cwd(),
@@ -351,10 +366,12 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                 actualRequest.modelName(),
                 actualRequest.cancellationToken()
         );
+        // 开启一轮 turn 的临时权限作用域。
         permissionService.beginTurn(actualRequest.turnId());
         try {
             return agentLoop.runTurn(actualRequest);
         } finally {
+            // 清除当前 turn 的权限作用域
             permissionService.endTurn(actualRequest.turnId());
         }
     }

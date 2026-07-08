@@ -68,6 +68,7 @@ public final class SystemPromptBuilder {
                 - Java MiniCode currently uses AGENTS.md for project/global instructions; this is equivalent to the TS reference prompt's CLAUDE.md instruction entry point.
                 - Local project instructions override broad global preferences when they conflict.
                 """.strip());
+        // 把 toolregister 加入
         prompt.add(toolSection(input.tools()));
         prompt.add(skillSection(input.skills()));
         mcpSection(input.mcpServers()).ifPresent(prompt::add);
@@ -134,6 +135,7 @@ public final class SystemPromptBuilder {
             builder.append("\n- none");
             return builder.toString();
         }
+        // 将工具的名称，描述以及要求的参数格式加入 prompt
         for (Tool tool : registry.list()) {
             builder.append("\n- ")
                     .append(tool.metadata().name())

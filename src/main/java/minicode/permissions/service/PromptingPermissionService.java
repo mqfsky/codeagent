@@ -123,23 +123,53 @@ public final class PromptingPermissionService implements PermissionService {
         return grant(kind, request.resource(), scopeFor(choice.decision()), persistenceFor(choice.decision()));
     }
 
+    /**
+     * 开启一轮 turn 的临时权限作用域。
+     *
+     * <p>调用方应在进入 {@code AgentLoop.runTurn(...)} 前调用该方法。它会为当前
+     * {@code turnId} 初始化一组本轮有效的授权资源，用来承载用户选择
+     * {@link PermissionDecision#ALLOW_TURN} 后产生的临时授权。</p>
+     *
+     * @param turnId 当前 turn 的唯一标识，不能为空或空白字符串
+     */
     @Override
     public synchronized void beginTurn(String turnId) {
         if (Objects.requireNonNull(turnId, "turnId").isBlank()) {
             throw new IllegalArgumentException("turnId must not be blank");
         }
+        // 为当前 turn 准备临时授权集合；如果已经存在，就复用已有集合。
         turnAllows.computeIfAbsent(turnId, ignored -> new HashSet<>());
     }
 
+    /**
+     * 结束一轮 turn，并清理本轮临时权限。
+     *
+     * <p>调用方应在 {@code finally} 中调用该方法，确保无论 turn 正常结束还是异常退出，
+     * {@link PermissionDecision#ALLOW_TURN} 产生的授权都不会泄漏到下一轮。</p>
+     *
+     * @param turnId 当前 turn 的唯一标识，不能为空或空白字符串
+     */
     @Override
     public synchronized void endTurn(String turnId) {
         if (Objects.requireNonNull(turnId, "turnId").isBlank()) {
             throw new IllegalArgumentException("turnId must not be blank");
         }
+        // turn 结束后删除本轮授权集合，让 ALLOW_TURN 只在当前 turn 内生效。
         turnAllows.remove(turnId);
     }
 
+    /**
+     * 判断当前权限资源是否已在本轮 turn 中被临时允许。
+     *
+     * <p>该方法只检查 {@link PermissionDecision#ALLOW_TURN} 写入的内存授权集合；
+     * 长期授权和长期拒绝由 {@link PermissionStore} 在调用方逻辑中处理。</p>
+     *
+     * @param context 当前权限请求所处的会话、turn 和工具上下文
+     * @param key 待检查的权限资源 key，例如某个路径、命令签名或 MCP 工具
+     * @return 如果当前 turn 已允许该资源，返回 {@code true}；否则返回 {@code false}
+     */
     private synchronized boolean turnAllowed(PermissionContext context, PermissionResourceKey key) {
+        // 没有 turnId 时无法命中本轮授权；有 turnId 时再检查对应资源 key 是否存在。
         return context.turnId()
                 .map(turnAllows::get)
                 .map(keys -> keys.contains(key))

@@ -117,6 +117,7 @@ public final class OpenAIModelAdapter implements ModelAdapter {
                 result.add(makeMessage("assistant", "<progress>\n" + pm.content() + "\n</progress>"));
             } else if (msg instanceof AssistantToolCallMessage tcm) {
                 // 工具调用：assistant message with tool_calls
+                // 将历史工具调用以及结果回填至 message
                 ObjectNode m = MAPPER.createObjectNode();
                 m.put("role", "assistant");
                 ArrayNode toolCalls = MAPPER.createArrayNode();
@@ -147,7 +148,15 @@ public final class OpenAIModelAdapter implements ModelAdapter {
         m.put("content", content == null ? "" : content);
         return m;
     }
-
+    // 格式
+//    {
+//        "type": "function",
+//        "function": {
+//                "name": "read_file",
+//                "description": "...",
+//                "parameters": { "...": "..." }
+//        }
+//    }
     private ArrayNode buildTools() {
         ArrayNode result = MAPPER.createArrayNode();
         for (Tool tool : tools.list()) {

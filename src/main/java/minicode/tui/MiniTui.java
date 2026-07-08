@@ -67,6 +67,7 @@ public final class MiniTui {
         }
     }
 
+    // 一次输入，启动 agent loop 循环
     public void runLoop() {
         try {
             String line;

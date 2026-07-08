@@ -14,14 +14,17 @@ import java.util.Optional;
 import java.util.StringJoiner;
 
 public final class ToolRegistry implements ToolExecutor {
+    // 内部维护一个 map
     private final Map<String, Tool> toolsByName = new LinkedHashMap<>();
 
+    // 注册
     public void register(Tool tool) {
         Tool actualTool = Objects.requireNonNull(tool, "tool");
         String name = actualTool.metadata().name();
         if (toolsByName.containsKey(name)) {
             throw new IllegalArgumentException("Tool already registered: " + name);
         }
+        // name 作为 key
         toolsByName.put(name, actualTool);
     }
 
@@ -36,8 +39,12 @@ public final class ToolRegistry implements ToolExecutor {
     @Override
     public ToolResult execute(ToolCall call, ToolContext toolContext) {
         ToolCall actualCall = Objects.requireNonNull(call, "call");
+        // 获取上下文
         ToolContext actualToolContext = Objects.requireNonNull(toolContext, "toolContext");
+
         actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+
+        // 获取工具
         Tool tool = toolsByName.get(actualCall.toolName());
         if (tool == null) {
             return ToolResult.error("Unknown tool: " + actualCall.toolName());
@@ -46,7 +53,9 @@ public final class ToolRegistry implements ToolExecutor {
         ValidationResult validation;
         try {
             actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+
             validation = tool.validateInput(actualCall.input());
+
             actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
         } catch (CancellationRequestedException exception) {
             throw exception;

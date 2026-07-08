@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
 public class ContextManager {
+    // microcompact 清理旧工具结果后，留在上下文里的占位文本, 为了告诉模型：这里原来有工具输出，但为了腾上下文空间已经清掉了；这个输出之前在本 session 里已经返回过。
     private static final String MICROCOMPACT_MARKER = "[Output cleared for context space. Full output was already returned earlier in this session.]";
     private static final double MICROCOMPACT_UTILIZATION = 0.50d;
     private static final int MICROCOMPACT_RETAIN_RECENT_RESULTS = 3;
@@ -74,21 +75,53 @@ public class ContextManager {
         return new ContextManager();
     }
 
+    /**
+     * 将单条过大的工具结果替换成可回填给模型的持久化引用消息。
+     *
+     * <p>模型下一轮仍然需要知道这个工具调用返回了什么，但完整输出可能非常长。
+     * 当结果字符数超过 {@code largeToolResultThreshold} 时，本方法会把完整内容写入
+     * {@link ToolResultStorage}，再把上下文里的 {@link ToolResultMessage} 替换成一个
+     * {@code <persisted-output>} 摘要块。这样既保留了工具调用 id / 工具名的配对关系，
+     * 又避免把巨大输出直接塞进模型上下文。</p>
+     *
+     * <p>例如一次 {@code read_file} 工具调用 id 为 {@code toolu_123}，原始输出有
+     * {@code 534210} 个字符，写入存储后得到 {@code storageRef.id() = "8f3c..."}
+     * 和 {@code storageRef.path() = "~/.minicode-java/tool-results/8f3c....txt"}，
+     * 预览长度为 {@code previewChars}。替换后的消息内容大致会是：</p>
+     *
+     * <pre>{@code
+     * <persisted-output toolUseId="toolu_123" toolName="read_file">
+     * STORAGE_REF: 8f3c...
+     * PATH: ~/.minicode-java/tool-results/8f3c....txt
+     * BYTES: 612345
+     * ORIGINAL_CHARS: 534210
+     * PREVIEW:
+     * 文件开头的一小段原始输出...
+     * </persisted-output>
+     * }</pre>
+     *
+     * @param message 原始工具结果消息
+     * @return 如果输出过大，返回替换后的消息和替换记录；否则返回原消息且替换记录为空
+     */
     public ToolResultReplacementResult replaceLargeToolResult(ToolResultMessage message) {
         ToolResultMessage actualMessage = Objects.requireNonNull(message, "message");
+        // noOp 模式用于测试或不启用上下文治理的场景，必须保持原消息不变。
         if (noOp) {
             return new ToolResultReplacementResult(actualMessage, Optional.empty());
         }
         String content = actualMessage.content();
+        // 小输出可以直接进上下文；已经是 persisted-output 的内容也不能重复持久化（表示已经被持久化机制处理过了)）。
         if (content.length() <= largeToolResultThreshold || isPersistedOutput(content)) {
             return new ToolResultReplacementResult(actualMessage, Optional.empty());
         }
 
+        // 超过阈值时，将完整输出写入 tool-results，并生成带预览的替换记录。
         ToolResultReplacementRecord record = replacementFor(
                 actualMessage,
                 content,
                 ToolResultReplacementTrigger.SINGLE_RESULT_TOO_LARGE
         );
+        // 保留 toolUseId/toolName/error，只替换 content，保证后续模型仍能按工具调用 id 配对。
         ToolResultMessage replacementMessage = new ToolResultMessage(
                 actualMessage.toolUseId(),
                 actualMessage.toolName(),
@@ -156,28 +189,38 @@ public class ContextManager {
         if (noOp || actualMessages.isEmpty()) {
             return actualMessages;
         }
+        // 如果当前输入占有效输入上限的比例 未达到阈值 则不进行压缩
         if (stats.utilization() < MICROCOMPACT_UTILIZATION) {
             return actualMessages;
         }
         List<Integer> compactableIndexes = new ArrayList<>();
         for (int index = 0; index < actualMessages.size(); index++) {
             ChatMessage message = actualMessages.get(index);
+            // 如果是工具调用结果信息
             if (message instanceof ToolResultMessage toolResult
+                    // 针对目标工具进行压缩
                     && MICROCOMPACTABLE_TOOLS.contains(toolResult.toolName())
+                    // 没被压缩过
                     && !toolResult.content().startsWith("<persisted-output ")
+                    // 已经进行过 microcompact 的
                     && !MICROCOMPACT_MARKER.equals(toolResult.content())) {
+                // 加入到待压缩列表
                 compactableIndexes.add(index);
             }
         }
+
+        // 需要清除的数量，仅保留最近 3 条
         int clearCount = compactableIndexes.size() - MICROCOMPACT_RETAIN_RECENT_RESULTS;
         if (clearCount <= 0) {
             return actualMessages;
         }
+
         List<ChatMessage> compacted = new ArrayList<>(actualMessages);
         boolean changed = false;
         for (int index = 0; index < clearCount; index++) {
             int messageIndex = compactableIndexes.get(index);
             ToolResultMessage original = (ToolResultMessage) compacted.get(messageIndex);
+            // 将内容直接替换为占位符
             compacted.set(messageIndex, new ToolResultMessage(
                     original.toolUseId(),
                     original.toolName(),
@@ -189,15 +232,33 @@ public class ContextManager {
         return changed ? List.copyOf(markProviderUsageStale(compacted)) : actualMessages;
     }
 
+    /**
+     * 当上下文里的消息内容被 microcompact 改写后，把历史里已有的 provider usage 标记为 stale，避免后续继续信任旧 token 统计。
+     * @param messages
+     * @return
+     */
+
     private List<ChatMessage> markProviderUsageStale(List<ChatMessage> messages) {
         List<ChatMessage> result = new ArrayList<>(messages.size());
         String reason = "tool_result content was microcompacted after this provider usage was recorded";
+        // 遍历所有消息
         for (ChatMessage message : messages) {
+            // 重新构造 messages
             result.add(markProviderUsageStale(message, reason));
         }
         return result;
     }
 
+    /**
+     * 只处理三类可能带 provider usage 的消息：
+     * AssistantMessage
+     * AssistantProgressMessage
+     * AssistantToolCallMessage
+     * 如果满足有 providerUsage 并且 usageStaleness 还不是 stale，就创建一条新的消息，把原来的内容、usage 都保留，但把 UsageStaleness 改成：stale
+     * @param message
+     * @param reason
+     * @return
+     */
     private ChatMessage markProviderUsageStale(ChatMessage message, String reason) {
         UsageStaleness staleness = UsageStaleness.stale(reason);
         return switch (message) {
@@ -228,8 +289,11 @@ public class ContextManager {
             return cached;
         }
 
+        // 文件存到本地
         ToolResultStorageRef storageRef = Objects.requireNonNull(storage, "storage").store(content);
+        // 取开头一段原始输出
         String preview = preview(content);
+        // 拼接内容
         String replacementContent = replacementContent(message, storageRef, content, preview);
         ToolResultReplacementRecord record = new ToolResultReplacementRecord(
                 message.toolUseId(),
