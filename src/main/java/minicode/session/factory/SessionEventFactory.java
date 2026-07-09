@@ -12,6 +12,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 
+/**
+ * 负责将业务对象包装为 sessionEvent
+ */
 public final class SessionEventFactory {
     private final String sessionId;
     private final String cwd;

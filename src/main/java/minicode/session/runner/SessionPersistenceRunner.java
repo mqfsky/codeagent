@@ -20,8 +20,10 @@ public final class SessionPersistenceRunner {
     public void apply(TurnPersistencePlan plan) {
         for (PersistenceAction action : Objects.requireNonNull(plan, "plan").actions()) {
             switch (action) {
+                // 三种类型的消息分别处理
                 case PersistenceAction.AppendMessagesAction appendMessages -> {
                     for (ChatMessage message : appendMessages.messages()) {
+                        // 将 message 包装后写入 jsonl
                         store.append(factory.message(message));
                     }
                 }

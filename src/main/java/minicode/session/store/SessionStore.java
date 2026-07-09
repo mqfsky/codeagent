@@ -37,6 +37,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
+/**
+ * 写 jsonl 文件的地方
+ */
 public final class SessionStore {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -48,9 +51,12 @@ public final class SessionStore {
 
     public void append(SessionEvent event) {
         Objects.requireNonNull(event, "event");
-        Path file = sessionFile(event.sessionId(), event.cwd());
+        // 工作环境通过 sessionID 以及 cwd 进行区分
+        Path file = sessionFile(event.sessionId(), event.cwd()); // 文件路径大概长这样 ~/.minicode-java/sessions/<cwd的base64目录>/<sessionId>.jsonl
         try {
+            // 创建父目录
             Files.createDirectories(file.getParent());
+            // 将 event 序列化为一行 json 后写入
             Files.writeString(file, serialize(event) + System.lineSeparator(), StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException exception) {
@@ -64,9 +70,11 @@ public final class SessionStore {
             return List.of();
         }
         try {
+            // 一行一行恢复
             List<SessionEvent> events = new ArrayList<>();
             for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
                 if (!line.isBlank()) {
+                    // 反序列化后加入
                     events.add(deserialize(line));
                 }
             }
@@ -88,16 +96,19 @@ public final class SessionStore {
         return Optional.of(events.getLast().uuid());
     }
 
+    // 从上次压缩边界开始加载 message
     public List<ChatMessage> loadMessagesSinceLatestCompactBoundary(String sessionId, String cwd) {
         List<SessionEvent> events = readAll(sessionId, cwd);
         int startIndex = 0;
         for (int index = events.size() - 1; index >= 0; index--) {
+            // 从后往前找压缩边界
             if (events.get(index).type() == SessionEventType.COMPACT_BOUNDARY) {
                 startIndex = index + 1;
                 break;
             }
         }
         List<ChatMessage> messages = new ArrayList<>();
+        // 从压缩边界开始加入 message 并返回
         for (int index = startIndex; index < events.size(); index++) {
             events.get(index).message().ifPresent(messages::add);
         }

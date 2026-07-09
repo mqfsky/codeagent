@@ -117,7 +117,7 @@ public final class MiniTui {
 
         // 5. 进入 Agent Loop：ApplicationServices 会包一层权限生命周期，再调用 agentLoop.runTurn。
         AgentTurnResult result = services.runTurn(services.turnRequest(List.copyOf(turnMessages), maxSteps));
-        // 追加至 session
+        // 将 action 追加至 session
         services.sessionPersistenceRunner().apply(result.persistencePlan());
         renderTurnResult(result);
         return true;

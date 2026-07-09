@@ -37,7 +37,7 @@ public sealed interface PersistenceAction permits PersistenceAction.AppendMessag
     }
 
     /**
-     * 追加会话元事件的持久化动作。
+     * 追加会话元事件的持久化动作，比如 rename，fork
      *
      * @param draft 会话元事件草稿
      */
