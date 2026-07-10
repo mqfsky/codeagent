@@ -22,10 +22,13 @@ public interface ReadFilePathAccess {
 
     static ReadFilePathAccess fromPermissionService(PermissionService permissionService) {
         PermissionService actualPermissionService = Objects.requireNonNull(permissionService, "permissionService");
+        // 真正的权限判断
         return (toolContext, resolvedPath) -> {
+            // cwd 内，直接读
             if (resolvedPath.boundary() == WorkspaceBoundary.INSIDE_CWD) {
                 return;
             }
+            // cwd 外，查看权限，或者提给用户判断
             actualPermissionService.ensurePath(
                     resolvedPath.normalizedPath(),
                     PathIntent.READ,

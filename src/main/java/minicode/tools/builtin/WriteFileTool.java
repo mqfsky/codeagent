@@ -90,24 +90,36 @@ public final class WriteFileTool implements Tool {
 
     @Override
     public ToolResult run(JsonNode normalizedInput, ToolContext toolContext) {
+        /**
+         * {
+         *   "path": "notes/123.txt",
+         *   "content": "hello\n"
+         * }
+         */
         String inputPath = normalizedInput.get("path").asText();
         String content = normalizedInput.get("content").asText();
 
         try {
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+            // 解析路径
             WorkspacePathResult resolvedPath = workspacePathResolver.resolve(new WorkspacePathRequest(
                     toolContext.cwd(),
                     inputPath,
                     PathIntent.WRITE,
                     WorkspacePathPolicy.TARGET_OR_EXISTING_PARENT
             ));
+
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.PERMISSION_PROMPT);
+            // 规范化后的真实文件路径
             Path targetPath = resolvedPath.resolvedPath().normalizedPath();
+            // 许可上下文
             PermissionContext permissionContext = new PermissionContext(
                     toolContext.sessionId(),
                     toolContext.turnId(),
                     toolContext.toolUseId()
             );
+
+            // 涉及 diff review，申请权限，授予权限，写文件，有问题会向外抛异常
             FileWriteResult result = fileWriteService.apply(
                     targetPath,
                     inputPath,
@@ -123,9 +135,10 @@ public final class WriteFileTool implements Tool {
                     : formatSuccess(targetPath, result.operation().orElseThrow(), content.length()));
         } catch (CancellationRequestedException exception) {
             throw exception;
-        } catch (PermissionDeniedException exception) {
+        } catch (PermissionDeniedException exception) { // 用户权限拒绝异常
+            // 返回的是 ToolResult.error
             return ToolResult.error(exception.getMessage());
-        } catch (WorkspacePathException exception) {
+        } catch (WorkspacePathException exception) { // 路径异常
             return ToolResult.error(exception.getMessage());
         } catch (IOException exception) {
             return ToolResult.error("Failed to write file " + inputPath + ": " + exception.getMessage());

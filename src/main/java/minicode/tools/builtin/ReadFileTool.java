@@ -99,6 +99,7 @@ public final class ReadFileTool implements Tool {
         boolean lineMode = normalizedInput.has("lineStart") || normalizedInput.has("lineCount");
 
         try {
+            // 解析后的路径，内部对路径是否合法进行判断
             WorkspacePathResult resolvedPath = workspacePathResolver.resolve(new WorkspacePathRequest(
                     toolContext.cwd(),
                     inputPath,
@@ -106,7 +107,11 @@ public final class ReadFileTool implements Tool {
                     true,
                     false
             ));
-            pathAccess.ensureReadAllowed(toolContext, resolvedPath.resolvedPath());
+
+            // 检查是在 cwd 内，在内部直接继续，在外部需要申请权限
+            pathAccess.ensureReadAllowed(toolContext, resolvedPath.resolvedPath()); // 如果用户拒绝，会抛异常被 catch
+
+            // 读文件
             String content = Files.readString(resolvedPath.resolvedPath().normalizedPath(), StandardCharsets.UTF_8);
             if (lineMode) {
                 int lineStart = normalizedInput.get("lineStart").asInt();

@@ -129,8 +129,10 @@ public final class RunCommandTool implements Tool {
 
     @Override
     public ToolResult run(JsonNode normalizedInput, ToolContext toolContext) {
+        // 获取指令及参数
         String command = normalizedInput.get("command").asText();
         List<String> args = argsFrom(normalizedInput.get("args"));
+
         Duration commandTimeout = timeoutPolicy.timeoutFor(
                 normalizedInput.has("timeoutSeconds") ? normalizedInput.get("timeoutSeconds").asInt() : null
         );
@@ -141,13 +143,18 @@ public final class RunCommandTool implements Tool {
         }
 
         try {
+            // 解析 cwd
             WorkspacePathResult commandCwd = resolveCwd(toolContext, normalizedInput.get("cwd"));
+            // 命令分类
             CommandClassificationResult classification = commandClassifier.classify(command, args);
+
+            // 构造权限上下文
             PermissionContext permissionContext = new PermissionContext(
                     toolContext.sessionId(),
                     toolContext.turnId(),
                     toolContext.toolUseId()
             );
+            // 路径检查，如果命令要在工作目录外执行，触发权限审查 ensurePath
             if (commandCwd.resolvedPath().boundary() == WorkspaceBoundary.OUTSIDE_CWD) {
                 toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.PERMISSION_PROMPT);
                 permissionService.ensurePath(
@@ -157,6 +164,8 @@ public final class RunCommandTool implements Tool {
                 );
                 toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.PERMISSION_PROMPT);
             }
+
+            // 指令检查，根据命令类型检查是否需要授予权限
             if (commandPolicy.requiresCommandPermission(classification, commandCwd.resolvedPath().boundary())) {
                 toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.PERMISSION_PROMPT);
                 permissionService.ensureCommand(
@@ -166,19 +175,24 @@ public final class RunCommandTool implements Tool {
                 );
                 toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.PERMISSION_PROMPT);
             }
+
+
             if (classification.shellSnippet() && shellSnippetPolicyRejects(command, args)) {
                 return ToolResult.error("Shell snippets are not supported by this Java run_command implementation. "
                         + "Use explicit argv for simple commands, for example command=\"git\", args=[\"status\"]. "
                         + "Shell wrappers such as sh/bash/cmd/powershell are treated as sensitive and require permission.");
             }
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+
+            // 执行命令
             CommandOutput output = execute(command, args, commandCwd.resolvedPath().normalizedPath(), commandTimeout,
                     toolContext);
+            // 格式化结果
             String content = formatResult(command, args, commandCwd.resolvedPath().normalizedPath(), output);
             return new ToolResult(content, output.exitCode() != 0, false, java.util.Optional.empty());
         } catch (CancellationRequestedException exception) {
             throw exception;
-        } catch (PermissionDeniedException exception) {
+        } catch (PermissionDeniedException exception) { // catch 权限拒绝
             return ToolResult.error(exception.getMessage());
         } catch (WorkspacePathException exception) {
             return ToolResult.error(exception.getMessage());
@@ -200,6 +214,7 @@ public final class RunCommandTool implements Tool {
         List<String> commandLine = new ArrayList<>();
         commandLine.add(command);
         commandLine.addAll(args);
+        // 通过 processBuilder 构造
         Process process = new ProcessBuilder(commandLine)
                 .directory(cwd.toFile())
                 .start();

@@ -106,6 +106,7 @@ public final class GrepFilesTool implements Tool {
 
     @Override
     public ToolResult run(JsonNode normalizedInput, ToolContext toolContext) {
+        // 获取参数
         String inputPath = normalizedInput.has("path") ? normalizedInput.get("path").asText() : ".";
         String query = normalizedInput.get("query").asText();
         boolean regex = normalizedInput.has("regex") && normalizedInput.get("regex").asBoolean();
@@ -116,6 +117,7 @@ public final class GrepFilesTool implements Tool {
                 : DEFAULT_MAX_MATCHES;
         boolean includeHidden = normalizedInput.has("includeHidden") && normalizedInput.get("includeHidden").asBoolean();
 
+
         Pattern pattern;
         try {
             pattern = regex ? compilePattern(query, caseSensitive) : null;
@@ -125,7 +127,9 @@ public final class GrepFilesTool implements Tool {
 
         try {
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+            // 解析 path
             WorkspacePathResult base = resolveFileOrDirectory(toolContext, inputPath);
+            // 申请权限
             ensurePathAllowed(base, toolContext);
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
 

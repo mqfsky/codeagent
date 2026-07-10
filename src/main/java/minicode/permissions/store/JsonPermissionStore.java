@@ -47,6 +47,7 @@ public final class JsonPermissionStore implements PermissionStore {
     public synchronized void save(PermissionStoreEntry entry) {
         loadIfNeeded();
         PermissionStoreEntry actualEntry = Objects.requireNonNull(entry, "entry");
+        // 写入 map
         entries.put(actualEntry.resourceKey(), actualEntry);
         write();
     }
@@ -57,7 +58,11 @@ public final class JsonPermissionStore implements PermissionStore {
         return List.copyOf(new ArrayList<>(entries.values()));
     }
 
+    /**
+     * 第一次访问权限存储时，把磁盘 JSON 中已有的权限记录加载到内存 entries 中
+     */
     private void loadIfNeeded() {
+        // 实例加载一次后不会再感知其他进程对 JSON 文件的修改，说明它默认权限文件主要由当前程序实例管理。
         if (loaded) {
             return;
         }
@@ -108,6 +113,7 @@ public final class JsonPermissionStore implements PermissionStore {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
+            // toJson 遍历 entries，写入 file
             MAPPER.writeValue(file.toFile(), toJson());
         } catch (IOException exception) {
             throw new UncheckedIOException("Failed to write permission store " + file, exception);

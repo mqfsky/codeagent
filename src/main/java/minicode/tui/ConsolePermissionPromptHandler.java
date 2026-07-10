@@ -34,6 +34,7 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
 
     @Override
     public PermissionPromptResult prompt(PermissionRequest request) {
+        // 在终端打印选项
         output.println("permission: " + request.details().title());
         output.println(request.details().body());
         for (String fact : request.details().facts()) {
@@ -41,8 +42,10 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
         }
         output.println("Waiting for permission choice. Enter a number, key, [key], or label.");
         renderChoices(request);
+
         try {
             PermissionChoice choice = readChoice(request);
+            // 如果是 deny，且选项包含 feedback，需要输入反馈
             if (choice.requiresFeedback()) {
                 output.print("Feedback: ");
                 output.flush();
@@ -67,12 +70,15 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
         while (true) {
             String line = input.readLine();
             if (line == null) {
+                // 选择兜底选项
                 return fallbackDenyChoice(request);
             }
+            // 匹配用户输入
             Optional<PermissionChoice> selected = selectChoice(request, line);
             if (selected.isPresent()) {
                 return selected.orElseThrow();
             }
+            // 无法识别，则让用户重新输入一遍
             output.println("Unknown permission choice: " + line.trim()
                     + ". Enter one of the listed numbers, keys, [keys], or labels.");
             output.print("Permission choice: ");
@@ -80,6 +86,13 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
         }
     }
 
+    /**
+     * 1) Allow once [allow_once]
+     * 2) Allow for this turn [allow_turn]
+     * 3) Deny once [deny_once]
+     * 4) Deny with feedback [deny_feedback]
+     * @param request
+     */
     private void renderChoices(PermissionRequest request) {
         for (int index = 0; index < request.choices().size(); index++) {
             PermissionChoice choice = request.choices().get(index);
@@ -87,6 +100,11 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
         }
     }
 
+    /**
+     * 兜底选择，先选择 DENY_ONCE，没找到择选择任意拒绝相信，还没找到，则选最后一个选项
+     * @param request
+     * @return
+     */
     private static PermissionChoice fallbackDenyChoice(PermissionRequest request) {
         return request.choices().stream()
                 .filter(choice -> choice.decision() == PermissionDecision.DENY_ONCE)
@@ -95,6 +113,15 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
                 .orElseGet(() -> request.choices().getLast());
     }
 
+    /**
+     * 将用户在终端输入的一行文字，匹配成某个 PermissionChoice，支持 3 种格式：
+     * 1                 // 序号
+     * allow_once        // key
+     * Allow once        // label
+     * @param request
+     * @param line
+     * @return
+     */
     private static Optional<PermissionChoice> selectChoice(PermissionRequest request, String line) {
         if (line == null) {
             return Optional.empty();
@@ -103,15 +130,18 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
         if (normalized.isBlank()) {
             return Optional.empty();
         }
+        // 先匹配序号
         try {
             int choiceNumber = Integer.parseInt(normalized);
             if (choiceNumber >= 1 && choiceNumber <= request.choices().size()) {
                 return Optional.of(request.choices().get(choiceNumber - 1));
             }
         } catch (NumberFormatException ignored) {
+            // 如果输入不是数字，则会抛出异常并被捕获，这里不做处理
             // Continue with key/label matching.
         }
         for (PermissionChoice choice : request.choices()) {
+            // 匹配 key 或 label
             if (normalize(choice.key()).equals(normalized) || normalize(choice.label()).equals(normalized)) {
                 return Optional.of(choice);
             }
@@ -119,6 +149,12 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
         return Optional.empty();
     }
 
+    /**
+     * 去掉首尾空格
+     * 去掉外层方括号
+     * 连续空格合并
+     * 转换成小写
+     */
     private static String normalize(String value) {
         String trimmed = value == null ? "" : value.trim();
         if (trimmed.startsWith("[") && trimmed.endsWith("]") && trimmed.length() > 2) {

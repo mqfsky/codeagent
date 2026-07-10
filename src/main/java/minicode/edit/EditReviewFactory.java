@@ -44,6 +44,7 @@ public final class EditReviewFactory {
                                                          String summary, Optional<String> beforeContent,
                                                          String afterContent, Optional<String> toolUseId) {
         return new PermissionResource.EditResource(
+                // 生成 diffreview
                 UnifiedDiffBuilder.build(
                         Objects.requireNonNull(path, "path"),
                         Objects.requireNonNull(operation, "operation"),

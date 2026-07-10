@@ -22,10 +22,14 @@ public final class FileWriteService {
     public FileWriteResult apply(Path targetPath, String filePath, String nextContent, Optional<String> toolUseId,
                                  PermissionContext permissionContext, Runnable beforeWriteCheck) throws IOException {
         Path actualTargetPath = Objects.requireNonNull(targetPath, "targetPath");
+        // 若文件存在，则读取已存在文件
         Optional<String> beforeContent = readExistingContent(actualTargetPath);
+        // 若存在则覆盖否则新建
         PermissionResource.EditOperation operation = beforeContent.isPresent()
                 ? PermissionResource.EditOperation.OVERWRITE
                 : PermissionResource.EditOperation.CREATE;
+
+        // 若失败会向外抛异常
         return applyReviewedReplacement(
                 actualTargetPath,
                 filePath,
@@ -109,6 +113,7 @@ public final class FileWriteService {
                                                      PermissionContext permissionContext,
                                                      Runnable beforeWriteCheck,
                                                      Optional<String> beforeContent) throws IOException {
+        // 参数校验
         Path actualTargetPath = Objects.requireNonNull(targetPath, "targetPath");
         String actualFilePath = Objects.requireNonNull(filePath, "filePath");
         PermissionResource.EditOperation actualOperation = Objects.requireNonNull(operation, "operation");
@@ -122,22 +127,28 @@ public final class FileWriteService {
         Runnable actualBeforeWriteCheck = Objects.requireNonNull(beforeWriteCheck, "beforeWriteCheck");
         Optional<String> actualBeforeContent = Objects.requireNonNull(beforeContent, "beforeContent");
 
+        // 文件已经存在，而且内容完全一样，就不需要权限，也不写盘，直接 no-op。
         if (actualBeforeContent.filter(actualNextContent::equals).isPresent()) {
             return FileWriteResult.noOp("No changes needed for " + actualFilePath);
         }
 
+        // 生成一个待审查修改，会显示在 ui 上
         PermissionResource.EditResource review = EditReviewFactory.review(
                 actualTargetPath,
                 actualOperation,
                 actualSummary,
-                actualBeforeContent,
-                actualNextContent,
+                actualBeforeContent, // 目标文件当前磁盘上的旧内容
+                actualNextContent, // 文件修改后的内容
                 actualToolUseId
         );
 
+        // 请求编辑权限，若没有请求过会有弹窗，若失败则会向外抛异常
         permissionService.ensureEdit(review, actualPermissionContext);
+
+        // 写入磁盘前的回调，实际传进来的是cancellationToken，检查用户在权限弹窗期间或刚批准后，有没有取消当前 turn。
         actualBeforeWriteCheck.run();
 
+        // 写文件
         Files.writeString(
                 actualTargetPath,
                 actualNextContent,

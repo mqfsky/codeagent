@@ -33,19 +33,28 @@ public final class CommandClassifier {
     }
 
     public CommandClassificationResult classify(String command, List<String> args) {
+        // 是否是 shell 指令
+        // sh -c "rm -rf target"
+        // bash -lc "..."
+        // powershell -Command "..."
         if (shellSnippetPolicy.looksLikeShellSnippet(command, args)) {
             return new CommandClassificationResult(CommandClassification.SENSITIVE, true, "shell snippet detected");
         }
 
+        // 提取指令名称：如果传的是 /usr/bin/git，提取 git，同时如果存在后缀则去掉
         String executable = executableName(command);
+        // 归一化 args，参数转小写，trim
         List<String> normalizedArgs = args.stream().map(CommandClassifier::normalizeToken).toList();
 
+        // 判断是否为危险命令
         if (DANGEROUS_EXECUTABLES.contains(executable) || containsDangerousWord(normalizedArgs)) {
             return new CommandClassificationResult(CommandClassification.DANGEROUS, false, "dangerous command");
         }
+        // 判断是否为只读命令
         if (isReadonly(executable, normalizedArgs)) {
             return new CommandClassificationResult(CommandClassification.READONLY, false, "readonly command");
         }
+        // 判断开发类命令
         if (containsAny(normalizedArgs, DEVELOPMENT_WORDS)) {
             return new CommandClassificationResult(CommandClassification.DEVELOPMENT, false, "development command");
         }

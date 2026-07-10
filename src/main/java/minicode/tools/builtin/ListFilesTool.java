@@ -96,6 +96,7 @@ public final class ListFilesTool implements Tool {
 
         try {
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+            // 解析路径
             WorkspacePathResult base = workspacePathResolver.resolve(new WorkspacePathRequest(
                     toolContext.cwd(),
                     inputPath,
@@ -103,11 +104,15 @@ public final class ListFilesTool implements Tool {
                     true,
                     true
             ));
+
+            // 检查权限
             ensurePathAllowed(base, toolContext);
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
 
             Listing listing = new Listing(limit);
             ListTraversalAuthorization traversalAuthorization = listTraversalAuthorization(base);
+
+            // 递归收集文件列表
             collect(toolContext.cwd(), base.resolvedPath().normalizedPath(), base.resolvedPath().normalizedPath(), 0, maxDepth,
                     includeHidden, listing, toolContext, traversalAuthorization);
             return ToolResult.ok(format(base.resolvedPath().normalizedPath(), listing));
@@ -123,6 +128,7 @@ public final class ListFilesTool implements Tool {
     }
 
     private void ensurePathAllowed(WorkspacePathResult base, ToolContext toolContext) {
+        // 当前项目目录，直接允许
         if (base.resolvedPath().boundary() == WorkspaceBoundary.INSIDE_CWD) {
             return;
         }
@@ -132,6 +138,7 @@ public final class ListFilesTool implements Tool {
                 toolContext.toolUseId()
         );
         toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.PERMISSION_PROMPT);
+        // 项目外，需要申请授权
         permissionService.ensurePath(base.resolvedPath().normalizedPath(), PathIntent.LIST, permissionContext);
         toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.PERMISSION_PROMPT);
     }

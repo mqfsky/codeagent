@@ -23,6 +23,9 @@ public record PermissionResourceKey(String type, String fingerprint) {
 
     public static PermissionResourceKey from(PermissionResource resource) {
         return switch (Objects.requireNonNull(resource, "resource")) {
+            // 路径权限，key 类似：
+            // path
+            // READ|/Users/mqf/secret.txt
             case PermissionResource.PathResource pathResource -> new PermissionResourceKey(
                     "path",
                     pathResource.intent() + "|" + normalizedPath(pathResource.path())

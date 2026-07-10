@@ -38,10 +38,9 @@ public final class ToolRegistry implements ToolExecutor {
 
     @Override
     public ToolResult execute(ToolCall call, ToolContext toolContext) {
+        // 校验参数
         ToolCall actualCall = Objects.requireNonNull(call, "call");
-        // 获取上下文
         ToolContext actualToolContext = Objects.requireNonNull(toolContext, "toolContext");
-
         actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
 
         // 获取工具
@@ -54,6 +53,7 @@ public final class ToolRegistry implements ToolExecutor {
         try {
             actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
 
+            // 校验输入
             validation = tool.validateInput(actualCall.input());
 
             actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
@@ -79,8 +79,10 @@ public final class ToolRegistry implements ToolExecutor {
 
         try {
             actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+            // 调用工具，得到结果，允许？拒绝？
             ToolResult result = tool.run(normalizedInput, actualToolContext);
             actualToolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
+
             return result == null ? ToolResult.error("Tool returned null ToolResult") : result;
         } catch (CancellationRequestedException exception) {
             throw exception;

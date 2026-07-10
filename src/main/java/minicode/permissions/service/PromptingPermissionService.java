@@ -56,6 +56,12 @@ public final class PromptingPermissionService implements PermissionService {
         return ensure(request, PermissionKind.COMMAND);
     }
 
+    /**
+     * 构造请求，请求权限
+     * @param resource
+     * @param context
+     * @return
+     */
     @Override
     public PermissionGrant ensureEdit(PermissionResource.EditResource resource, PermissionContext context) {
         PermissionRequest request = request(
@@ -78,25 +84,44 @@ public final class PromptingPermissionService implements PermissionService {
         return ensure(request, PermissionKind.MCP_TOOL);
     }
 
+    /**
+     * 对一次完整的权限请求做最终裁决：能直接放行就返回 PermissionGrant，不能放行就问用户，用户拒绝就抛 PermissionDeniedException。
+     * @param request 请求
+     * @param kind 请求类型
+     * @return
+     */
     private PermissionGrant ensure(PermissionRequest request, PermissionKind kind) {
+        // resource 转变为 key
         PermissionResourceKey key = PermissionResourceKey.from(request.resource());
+
+        // 查长期缓存
         Optional<PermissionStoreEntry> stored = store.find(request.resource());
+
+        // 查到是 deny
         if (stored.isPresent() && stored.orElseThrow().decision() == PermissionStoreDecision.DENY) {
             throw new PermissionDeniedException(request, Optional.empty(), Optional.empty());
         }
+
+        // 查到是 always允许
         if (stored.isPresent() && stored.orElseThrow().decision() == PermissionStoreDecision.ALLOW) {
             return grant(kind, request.resource(), PermissionGrantScope.ALWAYS, PermissionPersistence.USER);
         }
+
+        // 查本轮 turn 缓存
         if (turnAllowed(request.context(), key)) {
             return grant(kind, request.resource(), PermissionGrantScope.TURN, PermissionPersistence.MEMORY);
         }
 
+        // 都没查到，弹窗向用户请求权限
         PermissionPromptResult result = Objects.requireNonNull(promptHandler.prompt(request), "prompt result");
+        // choiceFor 是权限系统的“选项反查和合法性校验”：确保 prompt handler 返回的结果，确实对应这次请求里提供过的某个 PermissionChoice
         PermissionChoice choice = choiceFor(request, result);
         if (choice.decision() != result.decision()) {
             throw new IllegalArgumentException("Permission choice decision does not match prompt result decision");
         }
+
         if (!isAllow(choice.decision())) {
+            // 拒绝并且总是拒绝，则进行json持久化
             if (choice.decision() == PermissionDecision.DENY_ALWAYS) {
                 store.save(new PermissionStoreEntry(
                         PermissionStoreDecision.DENY,
@@ -105,8 +130,11 @@ public final class PromptingPermissionService implements PermissionService {
                         Instant.now()
                 ));
             }
+            // 如果不是 always 拒接，则直接抛出错误
             throw new PermissionDeniedException(request, Optional.of(choice.key()), result.feedback());
         }
+
+        // 写长期缓存
         if (choice.decision() == PermissionDecision.ALLOW_ALWAYS) {
             store.save(new PermissionStoreEntry(
                     PermissionStoreDecision.ALLOW,
@@ -115,6 +143,8 @@ public final class PromptingPermissionService implements PermissionService {
                     Instant.now()
             ));
         }
+
+        // 写本轮缓存
         if (choice.decision() == PermissionDecision.ALLOW_TURN) {
             request.context().turnId().ifPresent(turnId ->
                     turnAllows.computeIfAbsent(turnId, ignored -> new HashSet<>()).add(key)
@@ -280,7 +310,9 @@ public final class PromptingPermissionService implements PermissionService {
         return path.normalize().toString().replace('\\', '/');
     }
 
+    // choiceFor 是把“用户返回结果”重新绑定到“这次权限请求给出的合法选项”。
     private static PermissionChoice choiceFor(PermissionRequest request, PermissionPromptResult result) {
+        // 如果 key 存在则通过 key 匹配
         if (result.choiceKey().isPresent()) {
             String key = result.choiceKey().orElseThrow();
             return request.choices().stream()
@@ -288,9 +320,11 @@ public final class PromptingPermissionService implements PermissionService {
                     .findFirst()
                     .orElseThrow(() -> new IllegalArgumentException("Unknown permission choice: " + key));
         }
+        // key 不存在则通过 decision 匹配
         List<PermissionChoice> matching = request.choices().stream()
                 .filter(choice -> choice.decision() == result.decision())
                 .toList();
+        // 如果只有一个匹配上
         if (matching.size() == 1) {
             return matching.getFirst();
         }

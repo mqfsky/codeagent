@@ -213,7 +213,7 @@ public final class AgentLoop {
 
                         ToolResult result;
                         try {
-                            // 执行
+                            // 执行，内部流程是什么样的？得到结果：ok or error
                             result = toolExecutor.execute(call, createToolContext(request, call.id()));
                             request.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
                         } catch (CancellationRequestedException exception) {
@@ -229,15 +229,15 @@ public final class AgentLoop {
                         }
                         sawToolResultThisTurn = true;
                         if (result.error()) {
+                            // 记录工具错误次数
                             toolErrorCount++;
                         }
 
                         // 工具结果会变成 ToolResultMessage，追加回 messages，供下一轮 step 继续推理。
-                        ToolResultMessage toolResultMessage = appendToolResultMessage(
-                                request.turnId(), messages, actions, call, result);
+                        ToolResultMessage toolResultMessage = appendToolResultMessage(request.turnId(), messages, actions, call, result);
                         toolResultMessages.add(toolResultMessage);
-                        request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
 
+                        request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
                         // ask_user 这类工具会让 turn 暂停，等待用户补充输入后再继续。
                         if (result.awaitUser()) {
                             applyToolResultBudget(request.turnId(), messages, actions, toolResultMessages);
@@ -501,6 +501,7 @@ public final class AgentLoop {
         ToolResultMessage originalMessage = new ToolResultMessage(call.id(), call.toolName(), result.content(), result.error());
         // 检查工具输出是不是太大, 如果工具结果特别大，比如读了一个巨大文件、命令输出几十万字符，不能直接塞进上下文，否则会挤爆模型窗口。
         ToolResultReplacementResult replacementResult = contextManager.replaceLargeToolResult(originalMessage);
+
         ToolResultMessage message = replacementResult.message();
         appendMessage(turnId, messages, actions, message);
         publishEvent(new AgentEvent.ToolFinishedEvent(

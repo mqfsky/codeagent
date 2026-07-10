@@ -86,6 +86,7 @@ public final class OpenAIModelAdapter implements ModelAdapter {
 
     private ArrayNode buildMessages(List<ChatMessage> messages) {
         ArrayNode result = MAPPER.createArrayNode();
+        // 遍历历史消息
         for (ChatMessage msg : messages) {
             if (msg instanceof SystemMessage sm) {
                 result.add(makeMessage("system", sm.content()));
