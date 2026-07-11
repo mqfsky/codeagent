@@ -1,26 +1,26 @@
-# MiniCode4j
+# CodeAgent
 
 <p align="center">
-  <img src="./docs/logo.svg" alt="MiniCode Logo" width="180" />
+  <img src="./docs/logo.svg" alt="CodeAgent Logo" width="180" />
 </p>
 
-<h2 align="center">MiniCode4j</h2>
+<h2 align="center">CodeAgent</h2>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Java-21-D97757?style=for-the-badge" alt="Java 21" />
-  <img src="https://img.shields.io/badge/MiniCode-Java%20Edition-B85C3F?style=for-the-badge" alt="MiniCode Java Edition" />
+  <img src="https://img.shields.io/badge/CodeAgent-Java%20Edition-B85C3F?style=for-the-badge" alt="CodeAgent Edition" />
   <img src="https://img.shields.io/badge/terminal--first-agent-F0EBE1?style=for-the-badge&labelColor=8B8B8B" alt="terminal-first agent" />
 </p>
 
 ---
 
 <p align="center">
-  一个轻量级、本地优先、terminal-first 的 coding agent。MiniCode 的 Java 版。
+  一个轻量级、本地优先、terminal-first 的 coding agent。CodeAgent。
 </p>
 
 [English](./README.md) | [功能对齐概览](./FEATURE_ALIGNMENT_ZH.md) | [可优化点](./IMPROVEMENTS_ZH.md)
 
-MiniCode4j 面向本地开发工作流：读文件、搜代码、执行命令、审阅修改、保存可恢复会话，并在长上下文中通过上下文压缩保持可用。目前只支持作为一个coding agent的最小功能，很多地方都不太完善，但是能跑:)。
+CodeAgent 面向本地开发工作流：读文件、搜代码、执行命令、审阅修改、保存可恢复会话，并在长上下文中通过上下文压缩保持可用。目前只支持作为一个coding agent的最小功能，很多地方都不太完善，但是能跑:)。
 
 ## 特性
 
@@ -44,7 +44,7 @@ MiniCode4j 面向本地开发工作流：读文件、搜代码、执行命令、
 如果 `java` 和 `mvn` 已经在 `PATH` 中，可以直接使用：
 
 ```powershell
-cd <MiniCode4j 源码目录>
+cd <CodeAgent 源码目录>
 
 java -version
 mvn -version
@@ -56,33 +56,33 @@ mvn package
 产物：
 
 ```text
-target\minicode.jar
-target\dist\minicode\
+target\codeagent.jar
+target\dist\codeagent\
 ```
 
 其中：
 
-- `target\minicode.jar` 是可直接运行的 fat jar。
-- `target\dist\minicode\` 是发布目录，里面包含 `bin` 和 `lib`。
+- `target\codeagent.jar` 是可直接运行的 fat jar。
+- `target\dist\codeagent\` 是发布目录，里面包含 `bin` 和 `lib`。
 
 构建完成后可以先检查版本和帮助：
 
 ```powershell
-java -jar target\minicode.jar --version
-java -jar target\minicode.jar --help
+java -jar target\codeagent.jar --version
+java -jar target\codeagent.jar --help
 ```
 
 也可以直接测试发布目录里的 Windows launcher：
 
 ```powershell
-target\dist\minicode\bin\minicode.cmd --version
-target\dist\minicode\bin\minicode.cmd --help
+target\dist\codeagent\bin\codeagent.cmd --version
+target\dist\codeagent\bin\codeagent.cmd --help
 ```
 
 如果 JDK 21 没有加入 `PATH`，可以临时指定：
 
 ```powershell
-cd <MiniCode4j 源码目录>
+cd <CodeAgent 源码目录>
 
 $env:JAVA_HOME="<你的 JDK 21 安装目录>"
 $env:PATH="$env:JAVA_HOME\bin;$env:PATH"
@@ -96,27 +96,27 @@ mvn package
 把发布目录的 `bin` 加入 `PATH`：
 
 ```powershell
-$env:PATH="<MiniCode4j 源码目录>\target\dist\minicode\bin;$env:PATH"
+$env:PATH="<CodeAgent 源码目录>\target\dist\codeagent\bin;$env:PATH"
 ```
 
 然后在任意项目目录启动(记得配JAVA_HOME)：
 
 ```powershell
 cd <你的项目目录>
-minicode
+codeagent
 ```
 
 默认 workspace 就是当前 shell 目录。也可以显式指定：
 
 ```powershell
-minicode --cwd <你的项目目录>
+codeagent --cwd <你的项目目录>
 ```
 
 不想改 `PATH` 时，也可以用完整路径运行：
 
 ```powershell
 cd <你的项目目录>
-<MiniCode4j 源码目录>\target\dist\minicode\bin\minicode.cmd
+<CodeAgent 源码目录>\target\dist\codeagent\bin\codeagent.cmd
 ```
 
 快速 smoke：
@@ -124,8 +124,8 @@ cd <你的项目目录>
 ```powershell
 New-Item -ItemType Directory -Force .\manual-test-workspace | Out-Null
 cd .\manual-test-workspace
-<MiniCode4j 源码目录>\target\dist\minicode\bin\minicode.cmd --version
-<MiniCode4j 源码目录>\target\dist\minicode\bin\minicode.cmd session list
+<CodeAgent 源码目录>\target\dist\codeagent\bin\codeagent.cmd --version
+<CodeAgent 源码目录>\target\dist\codeagent\bin\codeagent.cmd session list
 ```
 
 ## Provider
@@ -133,7 +133,7 @@ cd .\manual-test-workspace
 Anthropic-compatible endpoint 示例(mimo是孩子测试的时候用的)：
 
 ```powershell
-$env:MINICODE_PROVIDER="anthropic-compatible"
+$env:CODEAGENT_PROVIDER="anthropic-compatible"
 $env:ANTHROPIC_BASE_URL="https://api.xiaomimimo.com/anthropic"
 $env:ANTHROPIC_MODEL="mimo-v2.5-pro"
 $env:ANTHROPIC_AUTH_TOKEN="<token>"
@@ -144,18 +144,18 @@ $env:ANTHROPIC_AUTH_TOKEN="<token>"
 ## 常用命令
 
 ```powershell
-minicode
-minicode --cwd <path>
-minicode --resume <id>
-minicode --fork <id>
-minicode session list
-minicode session rename <id> <title>
-minicode --max-steps <n>
-minicode --version
-minicode --help
+codeagent
+codeagent --cwd <path>
+codeagent --resume <id>
+codeagent --fork <id>
+codeagent session list
+codeagent session rename <id> <title>
+codeagent --max-steps <n>
+codeagent --version
+codeagent --help
 ```
 
-在任一交互式 TUI 中，可以使用 `/init` 生成 `MINI.md` 和 `.minicode/rules/`，
+在任一交互式 TUI 中，可以使用 `/init` 生成 `CODEAGENT.md` 和 `.codeagent/rules/`，
 使用 `/memory` 查看当前注入 Prompt 的记忆文件，使用 `/compact` 压缩会话上下文。
 
 session 按 workspace cwd 隔离。恢复 session 时，请在同一个项目目录运行，或传入相同的 `--cwd`。

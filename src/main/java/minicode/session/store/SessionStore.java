@@ -52,7 +52,7 @@ public final class SessionStore {
     public void append(SessionEvent event) {
         Objects.requireNonNull(event, "event");
         // 工作环境通过 sessionID 以及 cwd 进行区分
-        Path file = sessionFile(event.sessionId(), event.cwd()); // 文件路径大概长这样 ~/.minicode-java/sessions/<cwd的base64目录>/<sessionId>.jsonl
+        Path file = sessionFile(event.sessionId(), event.cwd()); // 文件路径大概长这样 ~/.codeagent/sessions/<cwd的base64目录>/<sessionId>.jsonl
         try {
             // 创建父目录
             Files.createDirectories(file.getParent());

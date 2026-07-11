@@ -26,7 +26,7 @@ public final class RuntimeConfigLoader {
     /**
      * 方法调用所需的输入参数集合。
      *
-     * @param home MiniCode 的数据目录
+     * @param home CodeAgent 的数据目录
      * @param cwd 当前 workspace 工作目录
      * @param env 环境变量映射
      */
@@ -43,41 +43,62 @@ public final class RuntimeConfigLoader {
     }
 
     public static RuntimeConfig load(Input input) {
+        // 校验加载配置所需的输入对象，避免后续访问 home、cwd、env 时出现空指针。
         Objects.requireNonNull(input, "input");
+
+        // 定位用户级配置文件：<home>/settings.json，对所有工作区生效。
         Path homeSettingsPath = input.home().resolve("settings.json");
-        Path cwdSettingsPath = input.cwd().resolve(".minicode").resolve("settings.json");
+        // 定位工作区级配置文件：<cwd>/.codeagent/settings.json，只对当前项目生效。
+        Path cwdSettingsPath = input.cwd().resolve(".codeagent").resolve("settings.json");
+
+        // 读取用户级配置；文件不存在时得到一个空 JSON 对象。
         JsonNode homeSettings = readSettings(homeSettingsPath);
+        // 读取工作区级配置；同名配置会优先于用户级配置。
         JsonNode cwdSettings = readSettings(cwdSettingsPath);
+
+        // 加载模型服务提供商，例如 ANTHROPIC 或 MOCK；未配置时默认使用 ANTHROPIC。
         ProviderKind provider = ProviderKind.parse(firstText(input.env(), homeSettings, cwdSettings,
-                "MINICODE_PROVIDER", "provider", "ANTHROPIC"));
+                "CODEAGENT_PROVIDER", "provider", "ANTHROPIC"));
+        // 加载模型名称，依次尝试 CODEAGENT_MODEL、ANTHROPIC_MODEL、model 和 anthropicModel。
         String model = firstNonBlank(
-                firstEnvText(input.env(), homeSettings, cwdSettings, "MINICODE_MODEL"),
+                firstEnvText(input.env(), homeSettings, cwdSettings, "CODEAGENT_MODEL"),
                 firstEnvText(input.env(), homeSettings, cwdSettings, "ANTHROPIC_MODEL"),
                 firstTopLevelText(homeSettings, cwdSettings, "model"),
                 firstTopLevelText(homeSettings, cwdSettings, "anthropicModel")
         );
+        // 加载模型服务的基础地址；未配置时使用 Anthropic 官方地址。
         String baseUrl = firstText(input.env(), homeSettings, cwdSettings, "ANTHROPIC_BASE_URL", "baseUrl",
                 DEFAULT_ANTHROPIC_BASE_URL);
+        // 加载 API Key；空字符串会转换为 Optional.empty()。
         Optional<String> apiKey = optionalText(firstText(input.env(), homeSettings, cwdSettings,
                 "ANTHROPIC_API_KEY", "apiKey", ""));
+        // 加载认证 Token，作为 API Key 之外的另一种认证方式。
         Optional<String> authToken = optionalText(firstText(input.env(), homeSettings, cwdSettings,
                 "ANTHROPIC_AUTH_TOKEN", "authToken", ""));
+        // 加载模型单次响应允许生成的最大 Token 数；未配置或不是正整数时保持为空。
         Optional<Integer> maxOutputTokens = positiveInteger(firstText(input.env(), homeSettings, cwdSettings,
-                "MINICODE_MAX_OUTPUT_TOKENS", "maxOutputTokens", ""));
+                "CODEAGENT_MAX_OUTPUT_TOKENS", "maxOutputTokens", ""));
+        // 加载模型上下文窗口大小；未配置或不是正整数时保持为空。
         Optional<Integer> contextWindow = positiveInteger(firstText(input.env(), homeSettings, cwdSettings,
-                "MINICODE_CONTEXT_WINDOW", "contextWindow", ""));
+                "CODEAGENT_CONTEXT_WINDOW", "contextWindow", ""));
+        // 加载 Agent 单次运行允许执行的最大步骤数，仅从工作区或用户级配置中读取。
         Optional<Integer> maxSteps = positiveInteger(firstTopLevelText(homeSettings, cwdSettings, "maxSteps"));
+        // 加载调用模型服务的超时时间（秒）；未配置时使用默认超时时间。
         Duration providerTimeout = providerTimeout(firstText(input.env(), homeSettings, cwdSettings,
-                "MINICODE_PROVIDER_TIMEOUT_SECONDS", "providerTimeoutSeconds", ""));
+                "CODEAGENT_PROVIDER_TIMEOUT_SECONDS", "providerTimeoutSeconds", ""));
+        // 合并用户级与工作区级 MCP Server 配置，工作区中的同名配置优先。
         Map<String, McpServerConfig> mcpServers = mcpServers(homeSettings, cwdSettings);
 
+        // 模型名称是运行必需项，所有来源都没有配置时立即终止启动。
         if (model.isBlank()) {
-            throw new RuntimeConfigException("No model configured. Set MINICODE_MODEL, ANTHROPIC_MODEL, or home settings.json model.");
+            throw new RuntimeConfigException("No model configured. Set CODEAGENT_MODEL, ANTHROPIC_MODEL, or home settings.json model.");
         }
+        // 除 MOCK 外的真实模型服务必须至少配置 API Key 或认证 Token 中的一种。
         if (provider != ProviderKind.MOCK && apiKey.isEmpty() && authToken.isEmpty()) {
             throw new RuntimeConfigException("No auth configured. Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN in env or home settings.json.");
         }
 
+        // 将完成校验和归一化的配置项组装成运行时不可变配置对象。
         return new RuntimeConfig(
                 provider,
                 model,

@@ -20,7 +20,7 @@ class SkillDiscoveryTest {
         Path cwd = tempDir.resolve("workspace");
         Path appHome = tempDir.resolve("app-home");
         Path osHome = tempDir.resolve("os-home");
-        writeSkill(cwd.resolve(".minicode/skills"), "shared", "project java description");
+        writeSkill(cwd.resolve(".codeagent/skills"), "shared", "project java description");
         writeSkill(appHome.resolve("skills"), "user-only", "user java description");
         writeSkill(cwd.resolve(".mini-code/skills"), "ts-only", "project ts description");
         writeSkill(osHome.resolve(".mini-code/skills"), "user-ts-only", "user ts description");
@@ -49,9 +49,9 @@ class SkillDiscoveryTest {
         Path cwd = tempDir.resolve("workspace");
         Path appHome = tempDir.resolve("app-home");
         Path osHome = tempDir.resolve("os-home");
-        Files.createDirectories(cwd.resolve(".minicode/skills/not-a-skill"));
-        Files.writeString(cwd.resolve(".minicode/skills/plain-file.txt"), "ignored");
-        writeSkill(cwd.resolve(".minicode/skills"), "good", "Good description.");
+        Files.createDirectories(cwd.resolve(".codeagent/skills/not-a-skill"));
+        Files.writeString(cwd.resolve(".codeagent/skills/plain-file.txt"), "ignored");
+        writeSkill(cwd.resolve(".codeagent/skills"), "good", "Good description.");
 
         List<LoadedSkill> skills = new SkillDiscovery(appHome, cwd, osHome).discover();
 
@@ -63,7 +63,7 @@ class SkillDiscoveryTest {
         Path cwd = tempDir.resolve("workspace");
         Path appHome = tempDir.resolve("app-home");
         Path osHome = tempDir.resolve("os-home");
-        Path root = cwd.resolve(".minicode/skills");
+        Path root = cwd.resolve(".codeagent/skills");
         Path outside = tempDir.resolve("outside-skill");
         Files.createDirectories(root);
         Files.createDirectories(outside);
@@ -87,7 +87,7 @@ class SkillDiscoveryTest {
         Path cwd = tempDir.resolve("workspace");
         Path appHome = tempDir.resolve("app-home");
         Path osHome = tempDir.resolve("os-home");
-        Path skillDir = cwd.resolve(".minicode/skills/desc");
+        Path skillDir = cwd.resolve(".codeagent/skills/desc");
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), """
                 # Heading
@@ -107,7 +107,7 @@ class SkillDiscoveryTest {
         Path cwd = tempDir.resolve("workspace");
         Path appHome = tempDir.resolve("app-home");
         Path osHome = tempDir.resolve("os-home");
-        Path skillDir = cwd.resolve(".minicode/skills/frontmatter");
+        Path skillDir = cwd.resolve(".codeagent/skills/frontmatter");
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), """
                 ---
@@ -130,7 +130,7 @@ class SkillDiscoveryTest {
         Path cwd = tempDir.resolve("workspace");
         Path appHome = tempDir.resolve("app-home");
         Path osHome = tempDir.resolve("os-home");
-        Path skillDir = cwd.resolve(".minicode/skills/using-superpowers");
+        Path skillDir = cwd.resolve(".codeagent/skills/using-superpowers");
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), """
                 ---
@@ -155,7 +155,7 @@ class SkillDiscoveryTest {
         Path cwd = tempDir.resolve("workspace");
         Path appHome = tempDir.resolve("app-home");
         Path osHome = tempDir.resolve("os-home");
-        Path skillDir = cwd.resolve(".minicode/skills/emptydesc");
+        Path skillDir = cwd.resolve(".codeagent/skills/emptydesc");
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), "# Only Heading\n");
 

@@ -21,7 +21,7 @@ class RuntimeConfigLoaderTest {
         RuntimeConfig config = RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(
                 tempDir.resolve("home"),
                 tempDir.resolve("workspace"),
-                Map.of("MINICODE_PROVIDER", "mock", "MINICODE_MODEL", "mock-model")
+                Map.of("CODEAGENT_PROVIDER", "mock", "CODEAGENT_MODEL", "mock-model")
         ));
 
         assertEquals(ProviderKind.MOCK, config.provider());
@@ -36,13 +36,13 @@ class RuntimeConfigLoaderTest {
                 RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(
                         tempDir.resolve("home"),
                         tempDir.resolve("workspace"),
-                        Map.of("MINICODE_PROVIDER", "anthropic")
+                        Map.of("CODEAGENT_PROVIDER", "anthropic")
                 )));
         RuntimeConfigException missingAuth = assertThrows(RuntimeConfigException.class, () ->
                 RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(
                         tempDir.resolve("home"),
                         tempDir.resolve("workspace"),
-                        Map.of("MINICODE_PROVIDER", "anthropic", "MINICODE_MODEL", "claude-test")
+                        Map.of("CODEAGENT_PROVIDER", "anthropic", "CODEAGENT_MODEL", "claude-test")
                 )));
 
         assertTrue(missingModel.getMessage().contains("No model configured"));
@@ -54,7 +54,7 @@ class RuntimeConfigLoaderTest {
         Path home = tempDir.resolve("home");
         Path cwd = tempDir.resolve("workspace");
         Files.createDirectories(home);
-        Files.createDirectories(cwd.resolve(".minicode"));
+        Files.createDirectories(cwd.resolve(".codeagent"));
         Files.writeString(home.resolve("settings.json"), """
                 {
                   "provider": "anthropic",
@@ -65,7 +65,7 @@ class RuntimeConfigLoaderTest {
                   "contextWindow": 200000
                 }
                 """);
-        Files.writeString(cwd.resolve(".minicode").resolve("settings.json"), """
+        Files.writeString(cwd.resolve(".codeagent").resolve("settings.json"), """
                 {
                   "model": "claude-from-project",
                   "baseUrl": "https://project.example",
@@ -78,9 +78,9 @@ class RuntimeConfigLoaderTest {
                 home,
                 cwd,
                 Map.of(
-                        "MINICODE_MODEL", "claude-from-env",
+                        "CODEAGENT_MODEL", "claude-from-env",
                         "ANTHROPIC_AUTH_TOKEN", "env-token",
-                        "MINICODE_MAX_OUTPUT_TOKENS", "2048"
+                        "CODEAGENT_MAX_OUTPUT_TOKENS", "2048"
                 )
         ));
 
@@ -94,7 +94,7 @@ class RuntimeConfigLoaderTest {
         assertTrue(config.maxSteps().isEmpty());
         assertEquals(java.time.Duration.ofSeconds(300), config.providerTimeout());
         assertTrue(config.sourceSummary().contains(home.resolve("settings.json").toString()));
-        assertTrue(config.sourceSummary().contains(cwd.resolve(".minicode").resolve("settings.json").toString()));
+        assertTrue(config.sourceSummary().contains(cwd.resolve(".codeagent").resolve("settings.json").toString()));
     }
 
     @Test
@@ -102,7 +102,7 @@ class RuntimeConfigLoaderTest {
         Path home = tempDir.resolve("home");
         Path cwd = tempDir.resolve("workspace");
         Files.createDirectories(home);
-        Files.createDirectories(cwd.resolve(".minicode"));
+        Files.createDirectories(cwd.resolve(".codeagent"));
         Files.writeString(home.resolve("settings.json"), """
                 {
                   "model": "home-top-model",
@@ -111,18 +111,18 @@ class RuntimeConfigLoaderTest {
                     "ANTHROPIC_MODEL": "home-env-model",
                     "ANTHROPIC_API_KEY": "home-env-key",
                     "ANTHROPIC_BASE_URL": "https://home-env.example",
-                    "MINICODE_MAX_OUTPUT_TOKENS": 1111
+                    "CODEAGENT_MAX_OUTPUT_TOKENS": 1111
                   }
                 }
                 """);
-        Files.writeString(cwd.resolve(".minicode").resolve("settings.json"), """
+        Files.writeString(cwd.resolve(".codeagent").resolve("settings.json"), """
                 {
                   "model": "cwd-top-model",
                   "apiKey": "cwd-top-key",
                   "env": {
                     "ANTHROPIC_MODEL": "cwd-env-model",
                     "ANTHROPIC_API_KEY": "cwd-env-key",
-                    "MINICODE_CONTEXT_WINDOW": 222222
+                    "CODEAGENT_CONTEXT_WINDOW": 222222
                   }
                 }
                 """);
@@ -130,7 +130,7 @@ class RuntimeConfigLoaderTest {
         RuntimeConfig config = RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(
                 home,
                 cwd,
-                Map.of("MINICODE_MAX_OUTPUT_TOKENS", "3333")
+                Map.of("CODEAGENT_MAX_OUTPUT_TOKENS", "3333")
         ));
 
         assertEquals("cwd-env-model", config.model());
@@ -145,7 +145,7 @@ class RuntimeConfigLoaderTest {
         Path home = tempDir.resolve("home");
         Path cwd = tempDir.resolve("workspace");
         Files.createDirectories(home);
-        Files.createDirectories(cwd.resolve(".minicode"));
+        Files.createDirectories(cwd.resolve(".codeagent"));
         Files.writeString(home.resolve("settings.json"), """
                 {
                   "provider": "anthropic",
@@ -154,7 +154,7 @@ class RuntimeConfigLoaderTest {
                   "providerTimeoutSeconds": 180
                 }
                 """);
-        Files.writeString(cwd.resolve(".minicode").resolve("settings.json"), """
+        Files.writeString(cwd.resolve(".codeagent").resolve("settings.json"), """
                 {
                   "providerTimeoutSeconds": 240
                 }
@@ -164,14 +164,14 @@ class RuntimeConfigLoaderTest {
                 tempDir.resolve("default-home"),
                 tempDir.resolve("default-workspace"),
                 Map.of(
-                        "MINICODE_PROVIDER", "anthropic",
+                        "CODEAGENT_PROVIDER", "anthropic",
                         "ANTHROPIC_MODEL", "env-model",
                         "ANTHROPIC_AUTH_TOKEN", "env-token"
                 )
         ));
         RuntimeConfig settingsConfig = RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(home, cwd, Map.of()));
         RuntimeConfig envConfig = RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(home, cwd,
-                Map.of("MINICODE_PROVIDER_TIMEOUT_SECONDS", "360")));
+                Map.of("CODEAGENT_PROVIDER_TIMEOUT_SECONDS", "360")));
 
         assertEquals(java.time.Duration.ofSeconds(300), defaultConfig.providerTimeout());
         assertEquals(java.time.Duration.ofSeconds(240), settingsConfig.providerTimeout());
@@ -183,7 +183,7 @@ class RuntimeConfigLoaderTest {
         Path home = tempDir.resolve("home");
         Path cwd = tempDir.resolve("workspace");
         Files.createDirectories(home);
-        Files.createDirectories(cwd.resolve(".minicode"));
+        Files.createDirectories(cwd.resolve(".codeagent"));
         Files.writeString(home.resolve("settings.json"), """
                 {
                   "provider": "mock",
@@ -191,7 +191,7 @@ class RuntimeConfigLoaderTest {
                   "maxSteps": 24
                 }
                 """);
-        Files.writeString(cwd.resolve(".minicode").resolve("settings.json"), """
+        Files.writeString(cwd.resolve(".codeagent").resolve("settings.json"), """
                 {
                   "maxSteps": 48
                 }
@@ -207,7 +207,7 @@ class RuntimeConfigLoaderTest {
         Path home = tempDir.resolve("home");
         Path cwd = tempDir.resolve("workspace");
         Files.createDirectories(home);
-        Files.createDirectories(cwd.resolve(".minicode"));
+        Files.createDirectories(cwd.resolve(".codeagent"));
         Files.writeString(home.resolve("settings.json"), """
                 {
                   "provider": "mock",
@@ -226,7 +226,7 @@ class RuntimeConfigLoaderTest {
                   }
                 }
                 """);
-        Files.writeString(cwd.resolve(".minicode").resolve("settings.json"), """
+        Files.writeString(cwd.resolve(".codeagent").resolve("settings.json"), """
                 {
                   "mcpServers": {
                     "fake": {

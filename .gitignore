@@ -7,8 +7,8 @@ target/
 .vscode/
 *.iml
 
-# Local MiniCode data
-.minicode/
+# Local CodeAgent data
+.codeagent/
 docs/superpowers/
 
 # Logs / runtime dumps

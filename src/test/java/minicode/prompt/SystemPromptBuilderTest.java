@@ -54,7 +54,7 @@ class SystemPromptBuilderTest {
         assertTrue(prompt.contains("Do not choose subjective preferences such as colors, visual style, copy tone, or naming unless the user explicitly told you to decide yourself."));
         assertTrue(prompt.contains("When using read_file, pay attention to the header fields. If it says TRUNCATED: yes, continue reading with a larger offset before concluding that the file itself is cut off."));
         assertTrue(prompt.contains("Layered project memory entry points:"));
-        assertTrue(prompt.contains("Read and follow AGENTS.md, MINI.md, and .minicode/rules/*.md memory files when present."));
+        assertTrue(prompt.contains("Read and follow AGENTS.md, CODEAGENT.md, and .codeagent/rules/*.md memory files when present."));
         assertTrue(prompt.contains("Memory is loaded from the global home, project root, and descendant directories in broad-to-specific order."));
         assertTrue(prompt.contains("More specific local project instructions override broader project or global preferences when they conflict."));
         assertTrue(prompt.contains("global-memory-content-marker"));
@@ -104,7 +104,7 @@ class SystemPromptBuilderTest {
         Files.writeString(home.resolve("AGENTS.md"), "global-memory-marker");
         Files.writeString(projectRoot.resolve("AGENTS.md"), "root-memory-marker");
         Files.writeString(nestedCwd.resolve("AGENTS.md"), "nested-memory-marker");
-        Files.writeString(nestedCwd.resolve("MINI.md"), "nested-mini-memory-marker");
+        Files.writeString(nestedCwd.resolve("CODEAGENT.md"), "nested-mini-memory-marker");
 
         String prompt = new SystemPromptBuilder().build(new SystemPromptBuilder.Input(
                 home,
@@ -119,7 +119,7 @@ class SystemPromptBuilderTest {
         assertTrue(globalIndex >= 0, "global memory should be present");
         assertTrue(rootIndex > globalIndex, "project-root memory should follow global memory");
         assertTrue(nestedIndex > rootIndex, "nested memory should follow project-root memory");
-        assertTrue(nestedMiniIndex > nestedIndex, "MINI.md should follow AGENTS.md in the same directory");
+        assertTrue(nestedMiniIndex > nestedIndex, "CODEAGENT.md should follow AGENTS.md in the same directory");
         assertEquals(1, occurrences(prompt, "global-memory-marker"));
         assertEquals(1, occurrences(prompt, "root-memory-marker"));
         assertEquals(1, occurrences(prompt, "nested-memory-marker"));
@@ -137,7 +137,7 @@ class SystemPromptBuilderTest {
         List<SkillSummary> skills = List.of(new SkillSummary(
                 "review",
                 "Review code carefully.",
-                cwd.resolve(".minicode/skills/review/SKILL.md"),
+                cwd.resolve(".codeagent/skills/review/SKILL.md"),
                 SkillSource.PROJECT_JAVA
         ));
 

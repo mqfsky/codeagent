@@ -34,7 +34,7 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * MiniCode Java 版本的命令行入口。
+ * CodeAgent 版本的命令行入口。
  *
  * <p>这个类负责完成进程启动阶段的工作：解析命令行参数、加载运行配置、
  * 初始化会话与 TUI 输入输出环境，并把真正的交互循环交给 {@link MiniTui}
@@ -62,7 +62,7 @@ public final class MiniCodeApp {
         // 将真实进程环境包装成可测试的 run(...) 入参。
         int exitCode = run(
                 args,
-                Path.of(System.getProperty("user.home"), ".minicode-java"),
+                Path.of(System.getProperty("user.home"), ".codeagent"),
                 Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize(),
                 System.in,
                 System.out,
@@ -76,10 +76,10 @@ public final class MiniCodeApp {
     }
 
     /**
-     * 使用默认 SnakeGame 启动器运行 MiniCode。
+     * 使用默认 SnakeGame 启动器运行 CodeAgent。
      *
      * @param args 启动参数
-     * @param home MiniCode 的数据目录，通常是 {@code ~/.minicode-java}
+     * @param home CodeAgent 的数据目录，通常是 {@code ~/.codeagent}
      * @param cwd 默认工作目录，通常是启动进程时的当前目录
      * @param input 用户输入流，通常是 {@code System.in}
      * @param output 标准输出流，通常是 {@code System.out}
@@ -94,14 +94,14 @@ public final class MiniCodeApp {
     }
 
     /**
-     * MiniCode 的主启动流程。
+     * CodeAgent 的主启动流程。
      *
      * <p>这个方法先解析命令行参数，处理 {@code --snake}、{@code --help}、
      * {@code --version} 和 session 管理命令；普通交互模式下会加载运行配置，
      * 然后创建应用服务并进入 TUI 循环。</p>
      *
      * @param args 启动参数
-     * @param home MiniCode 的数据目录
+     * @param home CodeAgent 的数据目录
      * @param cwd 默认工作目录
      * @param input 用户输入流
      * @param output 标准输出流
@@ -126,7 +126,7 @@ public final class MiniCodeApp {
             return 1;
         }
 
-        // 处理特殊命令：--snake 是彩蛋分支，不加载模型配置，也不启动 MiniCode TUI。
+        // 处理特殊命令：--snake 是彩蛋分支，不加载模型配置，也不启动 CodeAgent TUI。
         if (appArgs.snake()) {
             PrintWriter out = new PrintWriter(output, true, StandardCharsets.UTF_8);
             out.println("Starting SnakeGame...");
@@ -149,7 +149,7 @@ public final class MiniCodeApp {
 
         // 处理 --version：只打印版本号，不创建服务。
         if (appArgs.version()) {
-            new PrintWriter(output, true, StandardCharsets.UTF_8).println("minicode " + VERSION);
+            new PrintWriter(output, true, StandardCharsets.UTF_8).println("codeagent " + VERSION);
             return 0;
         }
 
@@ -169,8 +169,8 @@ public final class MiniCodeApp {
         } catch (RuntimeConfigException exception) {
             // 配置错误单独返回 2，方便调用方区分“配置缺失”和“运行异常”。
             err.println("Configuration error: " + exception.getMessage());
-            err.println("Configure MINICODE_PROVIDER, ANTHROPIC_MODEL or MINICODE_MODEL, and ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY.");
-            err.println("Mock mode is only used when MINICODE_PROVIDER=mock is explicitly set.");
+            err.println("Configure CODEAGENT_PROVIDER, ANTHROPIC_MODEL or CODEAGENT_MODEL, and ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY.");
+            err.println("Mock mode is only used when CODEAGENT_PROVIDER=mock is explicitly set.");
             return 2;
         }
 
@@ -188,13 +188,13 @@ public final class MiniCodeApp {
     }
 
     /**
-     * 使用调用方提供的服务工厂运行 MiniCode。
+     * 使用调用方提供的服务工厂运行 CodeAgent。
      *
      * <p>这个重载主要服务测试场景：测试可以注入自定义 {@link ServicesFactory}，
      * 避免真的创建网络模型、权限存储或终端 UI 依赖。</p>
      *
      * @param args 启动参数
-     * @param home MiniCode 的数据目录
+     * @param home CodeAgent 的数据目录
      * @param cwd 默认工作目录
      * @param input 用户输入流
      * @param output 标准输出流
@@ -215,7 +215,7 @@ public final class MiniCodeApp {
      * 中执行；本方法负责捕获运行时异常，并通过 {@link #safeMessage(RuntimeException, Map)} 对错误信息做脱敏。</p>
      *
      * @param args 启动参数
-     * @param home MiniCode 的数据目录
+     * @param home CodeAgent 的数据目录
      * @param cwd 默认工作目录
      * @param input 用户输入流
      * @param output 标准输出流
@@ -246,7 +246,7 @@ public final class MiniCodeApp {
      * 或 Renderer TUI。方法名里的 unchecked 表示异常由外层统一捕获。</p>
      *
      * @param args 启动参数
-     * @param home MiniCode 的数据目录
+     * @param home CodeAgent 的数据目录
      * @param cwd 默认工作目录
      * @param input 用户输入流
      * @param output 标准输出流
@@ -409,7 +409,7 @@ public final class MiniCodeApp {
         String subcommand = command.size() > 1 ? command.get(1) : "";
         switch (subcommand) {
             case "list" -> {
-                // 按 cwd 列出 session；MiniCode 的 session 是 workspace 隔离的。
+                // 按 cwd 列出 session；CodeAgent 的 session 是 workspace 隔离的。
                 List<SessionMetadata> sessions = sessionService.list(cwd);
                 if (sessions.isEmpty()) {
                     out.println("No sessions for cwd: " + cwd);
@@ -443,15 +443,15 @@ public final class MiniCodeApp {
     private static String usage() {
         return """
                 Usage:
-                  minicode
-                  minicode --cwd <path>
-                  minicode --resume <id>
-                  minicode --fork <id>
-                  minicode session list
-                  minicode session rename <id> <title>
-                  minicode --max-steps <n>
-                  minicode --version
-                  minicode --help
+                  codeagent
+                  codeagent --cwd <path>
+                  codeagent --resume <id>
+                  codeagent --fork <id>
+                  codeagent session list
+                  codeagent session rename <id> <title>
+                  codeagent --max-steps <n>
+                  codeagent --version
+                  codeagent --help
 
                 Options:
                   --cwd <path>       Use an explicit workspace directory.
@@ -599,7 +599,7 @@ public final class MiniCodeApp {
         java.util.ArrayList<Path> candidates = new java.util.ArrayList<>();
 
         // 系统属性允许测试或用户显式覆盖 snake.jar 路径。
-        String override = System.getProperty("minicode.snake.jar");
+        String override = System.getProperty("codeagent.snake.jar");
         if (override != null && !override.isBlank()) {
             candidates.add(Path.of(override));
         }
@@ -611,11 +611,11 @@ public final class MiniCodeApp {
                 candidates.add(parent.resolve("easter-eggs").resolve("snake").resolve("snake.jar"));
                 candidates.add(parent.resolve("..").resolve("easter-eggs").resolve("snake").resolve("snake.jar"));
                 candidates.add(parent.resolve("..").resolve("..").resolve("easter-eggs").resolve("snake").resolve("snake.jar"));
-                candidates.add(parent.resolve("dist").resolve("minicode").resolve("easter-eggs").resolve("snake").resolve("snake.jar"));
+                candidates.add(parent.resolve("dist").resolve("codeagent").resolve("easter-eggs").resolve("snake").resolve("snake.jar"));
             }
         });
         candidates.add(Path.of("easter-eggs", "snake", "snake.jar"));
-        candidates.add(Path.of("target", "dist", "minicode", "easter-eggs", "snake", "snake.jar"));
+        candidates.add(Path.of("target", "dist", "codeagent", "easter-eggs", "snake", "snake.jar"));
 
         // 返回第一个真实存在的候选路径。
         for (Path candidate : candidates) {
@@ -626,7 +626,7 @@ public final class MiniCodeApp {
         }
 
         // 没有找到 jar 时让 --snake 分支报出明确错误。
-        throw new IllegalStateException("SnakeGame jar not found. Expected easter-eggs/snake/snake.jar near MiniCode.");
+        throw new IllegalStateException("SnakeGame jar not found. Expected easter-eggs/snake/snake.jar near CodeAgent.");
     }
 
     /**
@@ -671,7 +671,7 @@ public final class MiniCodeApp {
         /**
          * 创建本次运行使用的应用服务集合。
          *
-         * @param home MiniCode 的数据目录
+         * @param home CodeAgent 的数据目录
          * @param cwd 实际工作目录
          * @param sessionId 当前 session 标识
          * @param eventSink Agent 事件出口，用于把工具、状态、上下文统计等事件发送给 UI
@@ -739,14 +739,14 @@ public final class MiniCodeApp {
          * @return 如果剩余参数以 {@code session} 开头则返回 {@code true}
          */
         private boolean sessionCommand() {
-            // session 命令以位置参数形式出现，例如 minicode session list。
+            // session 命令以位置参数形式出现，例如 codeagent session list。
             return !remaining.isEmpty() && "session".equals(remaining.getFirst());
         }
 
         /**
          * 从剩余参数中解析位置参数形式的 session id。
          *
-         * <p>这不同于 {@code --resume}：它支持 {@code minicode <sessionId>} 这种位置参数形式。
+         * <p>这不同于 {@code --resume}：它支持 {@code codeagent <sessionId>} 这种位置参数形式。
          * 如果剩余第一个参数以 {@code -} 开头，则认为是未知参数并抛出异常。</p>
          *
          * @return 位置参数 session id；没有位置参数时返回空

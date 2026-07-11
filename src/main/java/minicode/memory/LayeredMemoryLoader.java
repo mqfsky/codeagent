@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
  * 发现当前工作区的分层指令文件，并按照配置的预算限制处理其内容。
  *
  * <p>加载过程采用尽力而为策略：缺失、空白、不可读或在读取期间被删除的文件会被跳过，
- * 避免项目记忆文件的问题阻止 MiniCode 启动。</p>
+ * 避免项目记忆文件的问题阻止 CodeAgent 启动。</p>
  */
 public final class LayeredMemoryLoader {
     public static final int DEFAULT_MAX_PER_FILE_CHARS = 8_000;
@@ -33,18 +33,18 @@ public final class LayeredMemoryLoader {
     private static final Pattern WINDOWS_DRIVE_PATH_PATTERN = Pattern.compile("^[A-Za-z]:.*");
     private static final List<Path> GLOBAL_CANDIDATES = List.of(
             Path.of("AGENTS.md"),
-            Path.of("MINI.md")
+            Path.of("CODEAGENT.md")
     );
     private static final List<Path> DIRECTORY_CANDIDATES = List.of(
             Path.of("AGENTS.md"),
-            Path.of("MINI.md"),
-            Path.of(".minicode", "MINI.md"),
-            Path.of(".mini-code", "MINI.md"),
+            Path.of("CODEAGENT.md"),
+            Path.of(".codeagent", "CODEAGENT.md"),
+            Path.of(".mini-code", "CODEAGENT.md"),
             Path.of("AGENTS.local.md"),
             Path.of("MINI.local.md")
     );
     private static final List<Path> RULE_DIRECTORIES = List.of(
-            Path.of(".minicode", "rules"),
+            Path.of(".codeagent", "rules"),
             Path.of(".mini-code", "rules")
     );
 

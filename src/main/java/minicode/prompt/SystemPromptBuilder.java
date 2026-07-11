@@ -27,7 +27,7 @@ public final class SystemPromptBuilder {
     /**
      * 方法调用所需的输入参数集合。
      *
-     * @param home MiniCode 的数据目录
+     * @param home CodeAgent 的数据目录
      * @param cwd 当前 workspace 工作目录
      * @param tools 当前可暴露给模型的工具注册表
      * @param skills 当前发现的技能摘要列表
@@ -73,7 +73,7 @@ public final class SystemPromptBuilder {
                 """.strip());
         prompt.add("""
                 Layered project memory entry points:
-                - Read and follow AGENTS.md, MINI.md, and .minicode/rules/*.md memory files when present.
+                - Read and follow AGENTS.md, CODEAGENT.md, and .codeagent/rules/*.md memory files when present.
                 - Memory is loaded from the global home, project root, and descendant directories in broad-to-specific order.
                 - More specific local project instructions override broader project or global preferences when they conflict.
                 """.strip());
@@ -144,7 +144,7 @@ public final class SystemPromptBuilder {
     /**
      * 按照当前全局目录和工作目录重新加载分层项目记忆。
      *
-     * @param home MiniCode 的数据目录
+     * @param home CodeAgent 的数据目录
      * @param cwd 当前工作目录
      * @return 本次加载得到的最新记忆快照
      */

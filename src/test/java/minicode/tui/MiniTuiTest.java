@@ -324,13 +324,13 @@ class MiniTuiTest {
         String text = output.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("Init"), text);
         assertTrue(text.contains("Detected         Java, Maven"), text);
-        assertTrue(text.contains("MINI.md"), text);
-        assertTrue(text.contains(".minicode/rules/java.md"), text);
+        assertTrue(text.contains("CODEAGENT.md"), text);
+        assertTrue(text.contains(".codeagent/rules/java.md"), text);
         assertFalse(text.contains("user: /init"), text);
         assertTrue(model.calls.isEmpty());
         assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
-        assertTrue(Files.isRegularFile(workspace.resolve("MINI.md")));
-        assertTrue(Files.isRegularFile(workspace.resolve(".minicode/rules/maven.md")));
+        assertTrue(Files.isRegularFile(workspace.resolve("CODEAGENT.md")));
+        assertTrue(Files.isRegularFile(workspace.resolve(".codeagent/rules/maven.md")));
     }
 
     @Test

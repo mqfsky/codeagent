@@ -1,8 +1,8 @@
 # SnakeGame
 
-这是 MiniCode 自己在 `manual-test-workspace` 多轮测试中堆出来的 Swing 贪吃蛇小游戏。
+这是 CodeAgent 自己在 `manual-test-workspace` 多轮测试中堆出来的 Swing 贪吃蛇小游戏。
 
-它作为 MiniCode4j 的小彩蛋保留在独立目录中：
+它作为 CodeAgent 的小彩蛋保留在独立目录中：
 
 ```text
 easter-eggs\snake\
@@ -13,7 +13,7 @@ easter-eggs\snake\
 运行：
 
 ```powershell
-minicode --snake
+codeagent --snake
 ```
 
 也可以直接运行独立 jar：

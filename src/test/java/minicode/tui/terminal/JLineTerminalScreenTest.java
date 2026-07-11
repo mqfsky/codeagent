@@ -55,7 +55,7 @@ class JLineTerminalScreenTest {
 
         JLineTerminalScreen screen = new JLineTerminalScreen(terminal);
         screen.redraw(new RenderFrame(20, 3, List.of(
-                "MiniCode            ",
+                "CodeAgent           ",
                 "Ready               ",
                 "mini-code>          "
         ), 3, 12));

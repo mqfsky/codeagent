@@ -1,16 +1,16 @@
 # 功能对齐概览
 
-这份文档简单说明 MiniCode4j 当前已经和 TypeScript 版 MiniCode 对齐的能力，以及还没有完成的方向。
+这份文档简单说明 CodeAgent 当前已经和 TypeScript 版 CodeAgent 对齐的能力，以及还没有完成的方向。
 
 TypeScript 主仓库：
 
 ```text
-https://github.com/LiuMengxuan04/MiniCode
+https://github.com/LiuMengxuan04/CodeAgent
 ```
 
 ## 当前定位
 
-MiniCode4j 是 MiniCode 的 Java 版实现，目标不是做一个普通聊天 CLI，而是实现一个本地优先、terminal-first 的 coding agent。
+CodeAgent 是 CodeAgent实现，目标不是做一个普通聊天 CLI，而是实现一个本地优先、terminal-first 的 coding agent。
 
 核心工作流和 TS 版保持一致：
 
@@ -33,11 +33,11 @@ model -> tool -> model
 - skills 最小闭环：可以发现本地 skills，并通过 `load_skill` 加载完整内容。
 - context 管理：支持大工具输出预算、manual `/compact` 和自动 autoCompact。
 - stdio MCP tools：已经支持最小 stdio MCP tool 发现、注册和调用闭环。
-- Windows launcher：构建后可以通过 `minicode.cmd` / `minicode.ps1` 从任意目录启动。
+- Windows launcher：构建后可以通过 `codeagent.cmd` / `codeagent.ps1` 从任意目录启动。
 
 ## 和 TS 版仍有差距的部分
 
-MiniCode4j 当前能跑通最小 coding agent 工作流，但很多体验和扩展能力还不完整。主要差距包括：
+CodeAgent 当前能跑通最小 coding agent 工作流，但很多体验和扩展能力还不完整。主要差距包括：
 
 - TUI 还比较粗糙，完整的交互式渲染层、输入区、多行输入、session picker 等还没有做完。
 - MCP 目前只做了 stdio tools，resources、prompts、HTTP/SSE、server 管理等还没有完成。
@@ -54,11 +54,11 @@ IMPROVEMENTS_ZH.md
 
 ## 当前可用程度
 
-目前 MiniCode4j 已经可以作为一个最小 coding agent 使用：
+目前 CodeAgent 已经可以作为一个最小 coding agent 使用：
 
 ```powershell
 cd <你的项目目录>
-minicode
+codeagent
 ```
 
 它适合用于继续验证 Java 版 agent 架构、provider 适配、工具调用、权限审查、session 恢复和上下文压缩等核心能力。

@@ -183,12 +183,12 @@ class RendererTuiShellTest {
         String latest = screen.latestText();
         assertTrue(latest.contains("Init"), latest);
         assertTrue(latest.contains("Detected         Java, Gradle"), latest);
-        assertTrue(latest.contains(".minicode/rules/gradle.md"), latest);
+        assertTrue(latest.contains(".codeagent/rules/gradle.md"), latest);
         assertFalse(latest.contains("user: /init"), latest);
         assertEquals(0, modelCalls[0]);
         assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
-        assertTrue(Files.isRegularFile(workspace.resolve("MINI.md")));
-        assertTrue(Files.isRegularFile(workspace.resolve(".minicode/rules/gradle.md")));
+        assertTrue(Files.isRegularFile(workspace.resolve("CODEAGENT.md")));
+        assertTrue(Files.isRegularFile(workspace.resolve(".codeagent/rules/gradle.md")));
     }
 
     @Test

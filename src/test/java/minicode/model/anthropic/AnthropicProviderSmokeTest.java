@@ -35,10 +35,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class AnthropicProviderSmokeTest {
     @Test
     void realAnthropicProviderCanDriveToolUseToolResultContinueFinal() {
-        String enabled = System.getenv("MINICODE_ANTHROPIC_SMOKE");
+        String enabled = System.getenv("CODEAGENT_ANTHROPIC_SMOKE");
         String apiKey = System.getenv("ANTHROPIC_API_KEY");
         String authToken = System.getenv("ANTHROPIC_AUTH_TOKEN");
-        assumeTrue("1".equals(enabled), "Set MINICODE_ANTHROPIC_SMOKE=1 to run the real Anthropic smoke test.");
+        assumeTrue("1".equals(enabled), "Set CODEAGENT_ANTHROPIC_SMOKE=1 to run the real Anthropic smoke test.");
         assumeTrue((authToken != null && !authToken.isBlank()) || (apiKey != null && !apiKey.isBlank()),
                 "Set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY to run the real Anthropic smoke test.");
 
@@ -50,8 +50,8 @@ class AnthropicProviderSmokeTest {
                 envOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
                 optionalEnv("ANTHROPIC_API_KEY"),
                 optionalEnv("ANTHROPIC_AUTH_TOKEN"),
-                Optional.of(Integer.parseInt(envOrDefault("MINICODE_ANTHROPIC_SMOKE_MAX_TOKENS",
-                        envOrDefault("MINICODE_MAX_OUTPUT_TOKENS", "512")))),
+                Optional.of(Integer.parseInt(envOrDefault("CODEAGENT_ANTHROPIC_SMOKE_MAX_TOKENS",
+                        envOrDefault("CODEAGENT_MAX_OUTPUT_TOKENS", "512")))),
                 Optional.empty(),
                 "smoke"
         );

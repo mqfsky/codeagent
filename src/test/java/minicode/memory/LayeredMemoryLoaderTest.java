@@ -63,9 +63,9 @@ class LayeredMemoryLoaderTest {
         Path module = Files.createDirectories(projectRoot.resolve("module"));
 
         Path rootAgents = write(projectRoot, "AGENTS.md", "root agents");
-        Path rootMini = write(projectRoot, "MINI.md", "root mini");
+        Path rootMini = write(projectRoot, "CODEAGENT.md", "root mini");
         Path moduleAgents = write(module, "AGENTS.md", "module agents");
-        Path moduleMini = write(module, "MINI.md", "module mini");
+        Path moduleMini = write(module, "CODEAGENT.md", "module mini");
 
         MemorySnapshot snapshot = new LayeredMemoryLoader().load(home, module);
 
@@ -80,9 +80,9 @@ class LayeredMemoryLoaderTest {
         Path projectRoot = Files.createDirectories(tempDir.resolve("project"));
         Files.createDirectories(projectRoot.resolve(".git"));
         Path agents = write(projectRoot, "AGENTS.md", "root agents");
-        Path firstRule = write(projectRoot, ".minicode/rules/a-java.md", "java rules");
-        Path secondRule = write(projectRoot, ".minicode/rules/z-testing.md", "testing rules");
-        write(projectRoot, ".minicode/rules/ignored.txt", "not a rule");
+        Path firstRule = write(projectRoot, ".codeagent/rules/a-java.md", "java rules");
+        Path secondRule = write(projectRoot, ".codeagent/rules/z-testing.md", "testing rules");
+        write(projectRoot, ".codeagent/rules/ignored.txt", "not a rule");
 
         MemorySnapshot snapshot = new LayeredMemoryLoader().load(home, projectRoot);
 
@@ -105,9 +105,9 @@ class LayeredMemoryLoaderTest {
 
         write(home, "AGENTS.md", duplicate);
         write(projectRoot, "AGENTS.md", duplicate);
-        Path projectOnly = write(projectRoot, "MINI.md", "project-only instruction");
+        Path projectOnly = write(projectRoot, "CODEAGENT.md", "project-only instruction");
         Path closestDuplicate = write(module, "AGENTS.md", duplicate);
-        Path moduleOnly = write(module, "MINI.md", "module-only instruction");
+        Path moduleOnly = write(module, "CODEAGENT.md", "module-only instruction");
 
         MemorySnapshot snapshot = new LayeredMemoryLoader().load(home, module);
 
@@ -174,7 +174,7 @@ class LayeredMemoryLoaderTest {
         assertTrue(missing.renderPromptSection().isEmpty());
 
         write(home, "AGENTS.md", "");
-        write(projectRoot, "MINI.md", "");
+        write(projectRoot, "CODEAGENT.md", "");
         write(module, "AGENTS.md", "");
 
         MemorySnapshot empty = loader.load(home, module);

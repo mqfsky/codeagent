@@ -58,21 +58,21 @@ class MiniCodeAppTest {
                 new ByteArrayInputStream(new byte[0]),
                 output,
                 error,
-                Map.of("MINICODE_PROVIDER", "anthropic-compatible")
+                Map.of("CODEAGENT_PROVIDER", "anthropic-compatible")
         );
 
         String text = output.toString(StandardCharsets.UTF_8);
         assertEquals(0, exitCode, error.toString(StandardCharsets.UTF_8));
         assertTrue(text.contains("Usage:"), text);
-        assertTrue(text.contains("minicode"), text);
-        assertTrue(text.contains("minicode --cwd <path>"), text);
-        assertTrue(text.contains("minicode --resume <id>"), text);
-        assertTrue(text.contains("minicode --fork <id>"), text);
-        assertTrue(text.contains("minicode session list"), text);
-        assertTrue(text.contains("minicode session rename <id> <title>"), text);
-        assertTrue(text.contains("minicode --max-steps <n>"), text);
-        assertTrue(text.contains("minicode --version"), text);
-        assertTrue(text.contains("minicode --help"), text);
+        assertTrue(text.contains("codeagent"), text);
+        assertTrue(text.contains("codeagent --cwd <path>"), text);
+        assertTrue(text.contains("codeagent --resume <id>"), text);
+        assertTrue(text.contains("codeagent --fork <id>"), text);
+        assertTrue(text.contains("codeagent session list"), text);
+        assertTrue(text.contains("codeagent session rename <id> <title>"), text);
+        assertTrue(text.contains("codeagent --max-steps <n>"), text);
+        assertTrue(text.contains("codeagent --version"), text);
+        assertTrue(text.contains("codeagent --help"), text);
         assertFalse(text.contains("--snake"), text);
         assertFalse(error.toString(StandardCharsets.UTF_8).contains("Configuration error:"), error.toString(StandardCharsets.UTF_8));
     }
@@ -89,12 +89,12 @@ class MiniCodeAppTest {
                 new ByteArrayInputStream(new byte[0]),
                 output,
                 error,
-                Map.of("MINICODE_PROVIDER", "anthropic-compatible")
+                Map.of("CODEAGENT_PROVIDER", "anthropic-compatible")
         );
 
         String text = output.toString(StandardCharsets.UTF_8).strip();
         assertEquals(0, exitCode, error.toString(StandardCharsets.UTF_8));
-        assertEquals("minicode 0.1.0-SNAPSHOT", text);
+        assertEquals("codeagent 0.1.0-SNAPSHOT", text);
         assertFalse(error.toString(StandardCharsets.UTF_8).contains("Configuration error:"), error.toString(StandardCharsets.UTF_8));
     }
 
@@ -111,7 +111,7 @@ class MiniCodeAppTest {
                 new ByteArrayInputStream(new byte[0]),
                 output,
                 error,
-                Map.of("MINICODE_PROVIDER", "anthropic-compatible"),
+                Map.of("CODEAGENT_PROVIDER", "anthropic-compatible"),
                 () -> launched.set(true)
         );
 
@@ -134,14 +134,14 @@ class MiniCodeAppTest {
                 new ByteArrayInputStream(new byte[0]),
                 output,
                 error,
-                Map.of("MINICODE_PROVIDER", "anthropic-compatible")
+                Map.of("CODEAGENT_PROVIDER", "anthropic-compatible")
         );
 
         String errorText = error.toString(StandardCharsets.UTF_8);
         assertEquals(2, exitCode);
         assertTrue(errorText.contains("Configuration error:"));
         assertTrue(errorText.contains("No model configured."));
-        assertTrue(errorText.contains("MINICODE_MODEL"));
+        assertTrue(errorText.contains("CODEAGENT_MODEL"));
         assertFalse(errorText.contains("ANTHROPIC_AUTH_TOKEN="));
     }
 
@@ -277,7 +277,7 @@ class MiniCodeAppTest {
                 new ByteArrayInputStream(new byte[0]),
                 output,
                 error,
-                Map.of("MINICODE_PROVIDER", "anthropic-compatible")
+                Map.of("CODEAGENT_PROVIDER", "anthropic-compatible")
         );
 
         assertEquals(0, exitCode, error.toString(StandardCharsets.UTF_8));
@@ -400,8 +400,8 @@ class MiniCodeAppTest {
         Path processCwd = tempDir.resolve("process-cwd");
         Path workspace = tempDir.resolve("workspace").toAbsolutePath().normalize();
         Files.createDirectories(processCwd);
-        Files.createDirectories(workspace.resolve(".minicode"));
-        Files.writeString(workspace.resolve(".minicode").resolve("settings.json"),
+        Files.createDirectories(workspace.resolve(".codeagent"));
+        Files.writeString(workspace.resolve(".codeagent").resolve("settings.json"),
                 "{\"provider\":\"mock\",\"model\":\"mock-model\"}", StandardCharsets.UTF_8);
 
         int exitCode = MiniCodeApp.run(

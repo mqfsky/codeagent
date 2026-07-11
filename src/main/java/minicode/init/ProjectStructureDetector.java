@@ -20,7 +20,7 @@ import java.util.Set;
 public final class ProjectStructureDetector {
     private static final int MAX_SCAN_DEPTH = 10;
     private static final Set<String> SKIPPED_DIRECTORIES = Set.of(
-            ".git", ".gradle", ".idea", ".minicode", ".mini-code",
+            ".git", ".gradle", ".idea", ".codeagent", ".mini-code",
             "target", "build", "out", "node_modules"
     );
 

@@ -14,7 +14,7 @@ import java.util.Objects;
 import java.util.StringJoiner;
 
 /**
- * 根据检测到的 Java 项目结构幂等生成 MiniCode 项目记忆文件。
+ * 根据检测到的 Java 项目结构幂等生成 CodeAgent 项目记忆文件。
  */
 public final class ProjectInitializer {
     private final ProjectStructureDetector detector;
@@ -39,32 +39,32 @@ public final class ProjectInitializer {
         try {
             Path boundary = projectRoot.toRealPath();
             List<InitArtifact> artifacts = new ArrayList<>();
-            Path memoryDirectory = projectRoot.resolve(".minicode");
+            Path memoryDirectory = projectRoot.resolve(".codeagent");
             Path rulesDirectory = memoryDirectory.resolve("rules");
 
             // 先建立目录，再以 CREATE_NEW 写入文件，确保并发或重复执行时不会覆盖已有内容。
-            artifacts.add(new InitArtifact(".minicode/", ensureDirectory(memoryDirectory, boundary)));
-            artifacts.add(new InitArtifact(".minicode/rules/", ensureDirectory(rulesDirectory, boundary)));
-            artifacts.add(new InitArtifact("MINI.md",
-                    writeFileIfMissing(projectRoot.resolve("MINI.md"), renderMiniMd(structure), boundary)));
-            artifacts.add(new InitArtifact(".minicode/rules/project.md",
+            artifacts.add(new InitArtifact(".codeagent/", ensureDirectory(memoryDirectory, boundary)));
+            artifacts.add(new InitArtifact(".codeagent/rules/", ensureDirectory(rulesDirectory, boundary)));
+            artifacts.add(new InitArtifact("CODEAGENT.md",
+                    writeFileIfMissing(projectRoot.resolve("CODEAGENT.md"), renderMiniMd(structure), boundary)));
+            artifacts.add(new InitArtifact(".codeagent/rules/project.md",
                     writeFileIfMissing(rulesDirectory.resolve("project.md"), renderProjectRules(), boundary)));
 
             if (structure.javaProject()) {
-                artifacts.add(new InitArtifact(".minicode/rules/java.md",
+                artifacts.add(new InitArtifact(".codeagent/rules/java.md",
                         writeFileIfMissing(rulesDirectory.resolve("java.md"), renderJavaRules(), boundary)));
             }
             if (structure.mavenProject()) {
-                artifacts.add(new InitArtifact(".minicode/rules/maven.md",
+                artifacts.add(new InitArtifact(".codeagent/rules/maven.md",
                         writeFileIfMissing(rulesDirectory.resolve("maven.md"), renderMavenRules(structure), boundary)));
             }
             if (structure.gradleProject()) {
-                artifacts.add(new InitArtifact(".minicode/rules/gradle.md",
+                artifacts.add(new InitArtifact(".codeagent/rules/gradle.md",
                         writeFileIfMissing(rulesDirectory.resolve("gradle.md"), renderGradleRules(structure), boundary)));
             }
             return new InitReport(projectRoot, structure, artifacts);
         } catch (IOException exception) {
-            throw new UncheckedIOException("Cannot initialize MiniCode project at " + projectRoot, exception);
+            throw new UncheckedIOException("Cannot initialize CodeAgent project at " + projectRoot, exception);
         }
     }
 
@@ -83,15 +83,15 @@ public final class ProjectInitializer {
                     : "skipped (already exists)";
             rendered.add("  " + padRight(artifact.name(), 24) + label);
         }
-        rendered.add("  Next step        Review and tailor MINI.md and .minicode/rules/*.md");
+        rendered.add("  Next step        Review and tailor CODEAGENT.md and .codeagent/rules/*.md");
         return rendered.toString();
     }
 
     static String renderMiniMd(ProjectStructure structure) {
         StringJoiner content = new StringJoiner("\n");
-        content.add("# MINI.md");
+        content.add("# CODEAGENT.md");
         content.add("");
-        content.add("This file provides guidance to MiniCode when working with this repository.");
+        content.add("This file provides guidance to CodeAgent when working with this repository.");
         content.add("");
         content.add("## Detected project");
         content.add("- Language: " + (structure.javaProject() ? "Java." : "No Java source markers detected yet."));
@@ -113,13 +113,13 @@ public final class ProjectInitializer {
         }
         content.add("");
         content.add("## Layered rules");
-        content.add("- Additional project rules are stored in `.minicode/rules/*.md` and loaded in filename order.");
+        content.add("- Additional project rules are stored in `.codeagent/rules/*.md` and loaded in filename order.");
         content.add("- Keep generated guidance aligned with the repository's actual build and test workflow.");
         content.add("");
         content.add("## Working agreement");
         content.add("- Prefer small, reviewable changes and avoid unrelated rewrites.");
         content.add("- Update production code and its tests together when behavior changes.");
-        content.add("- Do not overwrite existing MINI.md or rule files automatically; edit them intentionally.");
+        content.add("- Do not overwrite existing CODEAGENT.md or rule files automatically; edit them intentionally.");
         content.add("");
         return content.toString();
     }
@@ -131,7 +131,7 @@ public final class ProjectInitializer {
                 - Preserve the existing module and package boundaries.
                 - Keep changes focused, reviewable, and consistent with nearby code.
                 - Update relevant tests whenever behavior changes.
-                - Use the detected verification commands documented in the repository MINI.md.
+                - Use the detected verification commands documented in the repository CODEAGENT.md.
                 """.strip() + "\n";
     }
 

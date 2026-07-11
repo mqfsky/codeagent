@@ -38,7 +38,7 @@ public final class SkillDiscovery {
 
     private List<SkillRoot> roots() {
         return List.of(
-                new SkillRoot(cwd.resolve(".minicode").resolve("skills"), SkillSource.PROJECT_JAVA),
+                new SkillRoot(cwd.resolve(".codeagent").resolve("skills"), SkillSource.PROJECT_JAVA),
                 new SkillRoot(appHome.resolve("skills"), SkillSource.USER_JAVA),
                 new SkillRoot(cwd.resolve(".mini-code").resolve("skills"), SkillSource.PROJECT_TS),
                 new SkillRoot(osHome.resolve(".mini-code").resolve("skills"), SkillSource.USER_TS),

@@ -25,7 +25,7 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(32, 6));
 
         assertEquals(List.of(
-                "MiniCode                        ",
+                "CodeAgent                       ",
                 "user: new user                  ",
                 "new assistant" + " ".repeat(19),
                 "--------------------------------",
@@ -62,7 +62,7 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(20, 8));
 
         assertEquals(8, frame.height());
-        assertEquals("MiniCode" + " ".repeat(12), frame.lines().getFirst());
+        assertEquals("CodeAgent" + " ".repeat(11), frame.lines().getFirst());
         assertEquals("-".repeat(20), frame.lines().get(5));
         assertEquals("Ready" + " ".repeat(15), frame.lines().get(6));
         assertEquals("mini-code> " + " ".repeat(9), frame.lines().get(7));

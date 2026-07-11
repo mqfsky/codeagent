@@ -86,13 +86,13 @@ public class ContextManager {
      *
      * <p>例如一次 {@code read_file} 工具调用 id 为 {@code toolu_123}，原始输出有
      * {@code 534210} 个字符，写入存储后得到 {@code storageRef.id() = "8f3c..."}
-     * 和 {@code storageRef.path() = "~/.minicode-java/tool-results/8f3c....txt"}，
+     * 和 {@code storageRef.path() = "~/.codeagent/tool-results/8f3c....txt"}，
      * 预览长度为 {@code previewChars}。替换后的消息内容大致会是：</p>
      *
      * <pre>{@code
      * <persisted-output toolUseId="toolu_123" toolName="read_file">
      * STORAGE_REF: 8f3c...
-     * PATH: ~/.minicode-java/tool-results/8f3c....txt
+     * PATH: ~/.codeagent/tool-results/8f3c....txt
      * BYTES: 612345
      * ORIGINAL_CHARS: 534210
      * PREVIEW:

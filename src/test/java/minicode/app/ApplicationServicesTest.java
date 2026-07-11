@@ -110,7 +110,7 @@ class ApplicationServicesTest {
     void appAssemblyRegistersLoadSkillAndPromptListsDiscoveredSkills() throws Exception {
         Path home = tempDir.resolve("home");
         Path workspace = tempDir.resolve("workspace");
-        Path skillDir = workspace.resolve(".minicode/skills/review");
+        Path skillDir = workspace.resolve(".codeagent/skills/review");
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), "# Review\n\nReview code carefully.");
 
@@ -154,7 +154,7 @@ class ApplicationServicesTest {
     void modelCanLoadDiscoveredSkillThroughToolRegistry() throws Exception {
         Path home = tempDir.resolve("home");
         Path workspace = tempDir.resolve("workspace");
-        Path skillDir = workspace.resolve(".minicode/skills/review");
+        Path skillDir = workspace.resolve(".codeagent/skills/review");
         Files.createDirectories(skillDir);
         Files.writeString(skillDir.resolve("SKILL.md"), "# Review\n\nReview code carefully.");
 

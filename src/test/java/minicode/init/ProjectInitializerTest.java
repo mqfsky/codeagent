@@ -29,14 +29,14 @@ class ProjectInitializerTest {
 
         ProjectInitializer.InitReport report = new ProjectInitializer().initialize(root);
 
-        assertTrue(Files.isDirectory(root.resolve(".minicode/rules")));
-        assertTrue(Files.isRegularFile(root.resolve("MINI.md")));
-        assertTrue(Files.isRegularFile(root.resolve(".minicode/rules/project.md")));
-        assertTrue(Files.isRegularFile(root.resolve(".minicode/rules/java.md")));
-        assertTrue(Files.isRegularFile(root.resolve(".minicode/rules/maven.md")));
-        assertFalse(Files.exists(root.resolve(".minicode/rules/gradle.md")));
+        assertTrue(Files.isDirectory(root.resolve(".codeagent/rules")));
+        assertTrue(Files.isRegularFile(root.resolve("CODEAGENT.md")));
+        assertTrue(Files.isRegularFile(root.resolve(".codeagent/rules/project.md")));
+        assertTrue(Files.isRegularFile(root.resolve(".codeagent/rules/java.md")));
+        assertTrue(Files.isRegularFile(root.resolve(".codeagent/rules/maven.md")));
+        assertFalse(Files.exists(root.resolve(".codeagent/rules/gradle.md")));
 
-        String mini = Files.readString(root.resolve("MINI.md"));
+        String mini = Files.readString(root.resolve("CODEAGENT.md"));
         assertTrue(mini.contains("Language: Java."), mini);
         assertTrue(mini.contains("Build system: Maven."), mini);
         assertTrue(mini.contains("`src/main/java`"), mini);
@@ -46,7 +46,7 @@ class ProjectInitializerTest {
                 .allMatch(artifact -> artifact.status() == ProjectInitializer.InitStatus.CREATED));
 
         MemorySnapshot memory = new LayeredMemoryLoader().load(home, root);
-        assertEquals(List.of("MINI.md", "java.md", "maven.md", "project.md"),
+        assertEquals(List.of("CODEAGENT.md", "java.md", "maven.md", "project.md"),
                 memory.documents().stream().map(document -> document.path().getFileName().toString()).toList());
         assertEquals(List.of(
                         MemoryDocument.Scope.PROJECT_ROOT,
@@ -64,15 +64,15 @@ class ProjectInitializerTest {
         Files.createDirectories(root.resolve("src/main/java"));
         ProjectInitializer initializer = new ProjectInitializer();
         initializer.initialize(root);
-        String originalMini = Files.readString(root.resolve("MINI.md"));
-        String originalJavaRules = Files.readString(root.resolve(".minicode/rules/java.md"));
+        String originalMini = Files.readString(root.resolve("CODEAGENT.md"));
+        String originalJavaRules = Files.readString(root.resolve(".codeagent/rules/java.md"));
 
         ProjectInitializer.InitReport second = initializer.initialize(root.resolve("src/main/java"));
 
         assertTrue(second.artifacts().stream()
                 .allMatch(artifact -> artifact.status() == ProjectInitializer.InitStatus.SKIPPED));
-        assertEquals(originalMini, Files.readString(root.resolve("MINI.md")));
-        assertEquals(originalJavaRules, Files.readString(root.resolve(".minicode/rules/java.md")));
+        assertEquals(originalMini, Files.readString(root.resolve("CODEAGENT.md")));
+        assertEquals(originalJavaRules, Files.readString(root.resolve(".codeagent/rules/java.md")));
     }
 
     @Test
@@ -81,18 +81,18 @@ class ProjectInitializerTest {
         Files.createDirectories(root.resolve(".git"));
         Files.writeString(root.resolve("pom.xml"), "<project/>");
         Files.createDirectories(root.resolve("src/main/java"));
-        Files.createDirectories(root.resolve(".minicode/rules"));
-        Files.writeString(root.resolve("MINI.md"), "custom mini content");
-        Files.writeString(root.resolve(".minicode/rules/java.md"), "custom java rules");
+        Files.createDirectories(root.resolve(".codeagent/rules"));
+        Files.writeString(root.resolve("CODEAGENT.md"), "custom mini content");
+        Files.writeString(root.resolve(".codeagent/rules/java.md"), "custom java rules");
 
         ProjectInitializer.InitReport report = new ProjectInitializer().initialize(root);
 
-        assertEquals("custom mini content", Files.readString(root.resolve("MINI.md")));
-        assertEquals("custom java rules", Files.readString(root.resolve(".minicode/rules/java.md")));
-        assertEquals(ProjectInitializer.InitStatus.SKIPPED, status(report, "MINI.md"));
-        assertEquals(ProjectInitializer.InitStatus.SKIPPED, status(report, ".minicode/rules/java.md"));
-        assertTrue(Files.isRegularFile(root.resolve(".minicode/rules/maven.md")));
-        assertTrue(Files.isRegularFile(root.resolve(".minicode/rules/project.md")));
+        assertEquals("custom mini content", Files.readString(root.resolve("CODEAGENT.md")));
+        assertEquals("custom java rules", Files.readString(root.resolve(".codeagent/rules/java.md")));
+        assertEquals(ProjectInitializer.InitStatus.SKIPPED, status(report, "CODEAGENT.md"));
+        assertEquals(ProjectInitializer.InitStatus.SKIPPED, status(report, ".codeagent/rules/java.md"));
+        assertTrue(Files.isRegularFile(root.resolve(".codeagent/rules/maven.md")));
+        assertTrue(Files.isRegularFile(root.resolve(".codeagent/rules/project.md")));
     }
 
     @Test
@@ -105,8 +105,8 @@ class ProjectInitializerTest {
 
         ProjectInitializer.InitReport report = new ProjectInitializer().initialize(root);
 
-        assertTrue(Files.readString(root.resolve("MINI.md")).contains("`./gradlew test`"));
-        assertTrue(Files.readString(root.resolve(".minicode/rules/gradle.md")).contains("`./gradlew test`"));
+        assertTrue(Files.readString(root.resolve("CODEAGENT.md")).contains("`./gradlew test`"));
+        assertTrue(Files.readString(root.resolve(".codeagent/rules/gradle.md")).contains("`./gradlew test`"));
         assertTrue(ProjectInitializer.renderReport(report).contains("Detected         Java, Gradle"));
     }
 

@@ -18,7 +18,7 @@ public final class TuiRenderer {
         int height = size.rows();
         int transcriptRows = Math.max(1, height - CHROME_ROWS);
         ArrayList<String> lines = new ArrayList<>(height);
-        lines.add(fit("MiniCode", width));
+        lines.add(fit("CodeAgent", width));
         lines.addAll(renderTranscript(state, transcriptLines, width, transcriptRows));
         lines.add(fit("-".repeat(width), width));
         lines.add(fit(statusText(state), width));
