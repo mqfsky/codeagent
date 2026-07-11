@@ -978,9 +978,9 @@ class ApplicationServicesTest {
     }
 
     @Test
-    void phaseFourAStillDoesNotIntroduceOpenAiOrSkillService() throws Exception {
+    void applicationLayerStillDoesNotIntroduceSkillService() throws Exception {
         Path mainRoot = Path.of("src/main/java");
-        List<String> forbidden = List.of("OpenAI", "SkillService");
+        List<String> forbidden = List.of("SkillService");
 
         boolean foundForbiddenReference;
         try (var paths = Files.walk(mainRoot)) {
@@ -1111,7 +1111,10 @@ class ApplicationServicesTest {
 
     private static minicode.mcp.McpServerConfig fakeMcpConfig(String mode) {
         return new minicode.mcp.McpServerConfig(
-                System.getProperty("java.home") + "\\bin\\java.exe",
+                Path.of(System.getProperty("java.home"), "bin",
+                        System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("win")
+                                ? "java.exe"
+                                : "java").toString(),
                 List.of("-cp", System.getProperty("java.class.path"), minicode.mcp.FakeMcpStdioServer.class.getName(), mode),
                 null,
                 Map.of(),

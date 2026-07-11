@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import minicode.config.ProviderKind;
 import minicode.config.RuntimeConfig;
 import minicode.model.ModelMetadata;
+import minicode.model.ProviderRequestException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;

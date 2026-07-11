@@ -23,7 +23,6 @@ import minicode.workspace.*;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -166,16 +165,18 @@ public final class ListFilesTool implements Tool {
         for (Path child : children) {
             toolContext.cancellationToken().throwIfCancellationRequested(CancellationPhase.TOOL_EXECUTION);
             WorkspacePathResult resolvedChild = resolveChild(cwd, child);
+            ListTraversalAuthorization childTraversalAuthorization = traversalAuthorization;
             if (!traversalAuthorization.covers(resolvedChild)) {
                 ensurePathAllowed(resolvedChild, toolContext);
+                childTraversalAuthorization = listTraversalAuthorization(resolvedChild);
             }
-            boolean directoryChild = Files.isDirectory(child, LinkOption.NOFOLLOW_LINKS);
+            boolean directoryChild = Files.isDirectory(child);
             if (!listing.add(relativeName(base, child) + (directoryChild ? "/" : ""))) {
                 return;
             }
             if (directoryChild) {
                 collect(cwd, base, child, depth + 1, maxDepth, includeHidden, listing, toolContext,
-                        traversalAuthorization);
+                        childTraversalAuthorization);
             }
         }
     }

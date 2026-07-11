@@ -1,8 +1,9 @@
 package minicode.tui.input;
 
-import org.jline.terminal.Terminal;
-import org.jline.terminal.TerminalBuilder;
+import org.jline.terminal.Attributes;
 import org.jline.terminal.Attributes.LocalFlag;
+import org.jline.terminal.Terminal;
+import org.jline.terminal.impl.DumbTerminal;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -67,12 +68,11 @@ class JLineTuiInputTest {
 
     @Test
     void constructorEntersRawModeSoMouseAndKeysBypassLineEditor() throws Exception {
-        Terminal terminal = TerminalBuilder.builder()
-                .system(false)
-                .type("xterm")
-                .streams(new ByteArrayInputStream(new byte[0]), new ByteArrayOutputStream())
-                .encoding(StandardCharsets.UTF_8)
-                .build();
+        Terminal terminal = terminal(new byte[0], new ByteArrayOutputStream());
+        Attributes attributes = terminal.getAttributes();
+        attributes.setLocalFlag(LocalFlag.ICANON, true);
+        attributes.setLocalFlag(LocalFlag.ECHO, true);
+        terminal.setAttributes(attributes);
 
         new JLineTuiInput(terminal);
 
@@ -81,12 +81,16 @@ class JLineTuiInputTest {
     }
 
     private static JLineTuiInput input(String text) throws Exception {
-        Terminal terminal = TerminalBuilder.builder()
-                .system(false)
-                .type("xterm")
-                .streams(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)), new ByteArrayOutputStream())
-                .encoding(StandardCharsets.UTF_8)
-                .build();
-        return new JLineTuiInput(terminal);
+        return new JLineTuiInput(terminal(text.getBytes(StandardCharsets.UTF_8), new ByteArrayOutputStream()));
+    }
+
+    private static Terminal terminal(byte[] input, ByteArrayOutputStream output) throws Exception {
+        return new DumbTerminal(
+                "test-terminal",
+                "xterm",
+                new ByteArrayInputStream(input),
+                output,
+                StandardCharsets.UTF_8
+        );
     }
 }

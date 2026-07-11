@@ -2,7 +2,7 @@ package minicode.tui.terminal;
 
 import minicode.tui.render.RenderFrame;
 import org.jline.terminal.Terminal;
-import org.jline.terminal.TerminalBuilder;
+import org.jline.terminal.impl.DumbTerminal;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -16,12 +16,7 @@ class JLineTerminalScreenTest {
     @Test
     void screenUsesAlternateScreenAndClearsForRedraws() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        Terminal terminal = TerminalBuilder.builder()
-                .system(false)
-                .type("xterm")
-                .streams(new ByteArrayInputStream(new byte[0]), output)
-                .encoding(StandardCharsets.UTF_8)
-                .build();
+        Terminal terminal = terminal(output);
 
         JLineTerminalScreen screen = new JLineTerminalScreen(terminal);
         screen.redraw(new RenderFrame(8, 3, List.of(
@@ -41,12 +36,7 @@ class JLineTerminalScreenTest {
     @Test
     void screenKeepsMouseSelectionAvailableAndEnablesAlternateScroll() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        Terminal terminal = TerminalBuilder.builder()
-                .system(false)
-                .type("xterm")
-                .streams(new ByteArrayInputStream(new byte[0]), output)
-                .encoding(StandardCharsets.UTF_8)
-                .build();
+        Terminal terminal = terminal(output);
 
         JLineTerminalScreen screen = new JLineTerminalScreen(terminal);
         screen.close();
@@ -61,12 +51,7 @@ class JLineTerminalScreenTest {
     @Test
     void redrawShowsAndPositionsRealTerminalCursor() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        Terminal terminal = TerminalBuilder.builder()
-                .system(false)
-                .type("xterm")
-                .streams(new ByteArrayInputStream(new byte[0]), output)
-                .encoding(StandardCharsets.UTF_8)
-                .build();
+        Terminal terminal = terminal(output);
 
         JLineTerminalScreen screen = new JLineTerminalScreen(terminal);
         screen.redraw(new RenderFrame(20, 3, List.of(
@@ -79,5 +64,15 @@ class JLineTerminalScreenTest {
         String text = output.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("\u001B[?25h"), text);
         assertTrue(text.contains("\u001B[3;12H"), text);
+    }
+
+    private static Terminal terminal(ByteArrayOutputStream output) throws Exception {
+        return new DumbTerminal(
+                "test-terminal",
+                "xterm",
+                new ByteArrayInputStream(new byte[0]),
+                output,
+                StandardCharsets.UTF_8
+        );
     }
 }

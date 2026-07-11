@@ -15,6 +15,7 @@ import minicode.core.step.ToolCallsStep;
 import minicode.core.turn.AgentTurnRequest;
 import minicode.core.turn.AgentTurnResult;
 import minicode.core.turn.AgentTurnStopReason;
+import minicode.model.ProviderRequestException;
 import minicode.model.ProviderThinkingBlock;
 import minicode.tools.api.ToolCall;
 import minicode.tools.builtin.AskUserTool;

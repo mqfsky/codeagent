@@ -32,14 +32,21 @@ class RuntimeConfigLoaderTest {
 
     @Test
     void realProviderRequiresModelAndAuthInsteadOfFallingBackToMock() {
-        RuntimeConfigException exception = assertThrows(RuntimeConfigException.class, () ->
+        RuntimeConfigException missingModel = assertThrows(RuntimeConfigException.class, () ->
                 RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(
                         tempDir.resolve("home"),
                         tempDir.resolve("workspace"),
                         Map.of("MINICODE_PROVIDER", "anthropic")
                 )));
+        RuntimeConfigException missingAuth = assertThrows(RuntimeConfigException.class, () ->
+                RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(
+                        tempDir.resolve("home"),
+                        tempDir.resolve("workspace"),
+                        Map.of("MINICODE_PROVIDER", "anthropic", "MINICODE_MODEL", "claude-test")
+                )));
 
-        assertTrue(exception.getMessage().contains("No model configured"));
+        assertTrue(missingModel.getMessage().contains("No model configured"));
+        assertTrue(missingAuth.getMessage().contains("No auth configured"));
     }
 
     @Test
