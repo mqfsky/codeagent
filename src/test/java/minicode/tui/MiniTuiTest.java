@@ -32,6 +32,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -226,6 +227,110 @@ class MiniTuiTest {
         assertTrue(text.contains("compact: started"), text);
         assertTrue(text.contains("compact: skipped"), text);
         assertFalse(text.contains("turn_stop:"), text);
+    }
+
+    @Test
+    void slashMemoryReportsFreshFilesWithoutCallingModelOrPersistingCommand() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.writeString(workspace.resolve("AGENTS.md"), "memory-report-marker");
+        RecordingModelAdapter model = new RecordingModelAdapter();
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                model,
+                new MiniTuiEventSink(output, event -> {
+                }),
+                PermissionPromptHandler.unavailable()
+        );
+        MiniTui tui = new MiniTui(services, input("/memory\n"), output);
+
+        tui.runOnce();
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("Memory files loaded: 1"), text);
+        assertTrue(text.contains("scope: project-root"), text);
+        assertTrue(text.contains("preview: memory-report-marker"), text);
+        assertFalse(text.contains("user: /memory"), text);
+        assertTrue(model.calls.isEmpty());
+        assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
+    }
+
+    @Test
+    void changedMemoryFileIsVisibleToTheModelOnTheNextTurn() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Files.createDirectories(workspace.resolve(".git"));
+        Path memoryFile = workspace.resolve("AGENTS.md");
+        Files.writeString(memoryFile, "memory-version-one-marker");
+        List<String> systemPrompts = new ArrayList<>();
+        ModelAdapter model = messages -> {
+            systemPrompts.add(((SystemMessage) messages.getFirst()).content());
+            if (systemPrompts.size() == 1) {
+                try {
+                    Files.writeString(memoryFile, "memory-version-two-marker");
+                } catch (java.io.IOException exception) {
+                    throw new java.io.UncheckedIOException(exception);
+                }
+            }
+            return new AssistantStep("reply-" + systemPrompts.size(), AssistantKind.FINAL);
+        };
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                model,
+                new MiniTuiEventSink(output, event -> {
+                }),
+                PermissionPromptHandler.unavailable()
+        );
+        MiniTui tui = new MiniTui(services, input("first\nsecond\n"), output);
+
+        tui.runLoop();
+
+        assertEquals(2, systemPrompts.size());
+        assertTrue(systemPrompts.get(0).contains("memory-version-one-marker"));
+        assertFalse(systemPrompts.get(0).contains("memory-version-two-marker"));
+        assertTrue(systemPrompts.get(1).contains("memory-version-two-marker"));
+        assertFalse(systemPrompts.get(1).contains("memory-version-one-marker"));
+    }
+
+    @Test
+    void slashInitCreatesJavaProjectMemoryWithoutCallingModelOrEnteringSession() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.writeString(workspace.resolve("pom.xml"), "<project/>");
+        Files.createDirectories(workspace.resolve("src/main/java"));
+        RecordingModelAdapter model = new RecordingModelAdapter();
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                model,
+                new MiniTuiEventSink(output, event -> {
+                }),
+                PermissionPromptHandler.unavailable()
+        );
+        MiniTui tui = new MiniTui(services, input("/init\n"), output);
+
+        tui.runOnce();
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("Init"), text);
+        assertTrue(text.contains("Detected         Java, Maven"), text);
+        assertTrue(text.contains("MINI.md"), text);
+        assertTrue(text.contains(".minicode/rules/java.md"), text);
+        assertFalse(text.contains("user: /init"), text);
+        assertTrue(model.calls.isEmpty());
+        assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
+        assertTrue(Files.isRegularFile(workspace.resolve("MINI.md")));
+        assertTrue(Files.isRegularFile(workspace.resolve(".minicode/rules/maven.md")));
     }
 
     @Test

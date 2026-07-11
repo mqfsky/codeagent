@@ -1,19 +1,29 @@
 package minicode.prompt;
 
+import minicode.memory.LayeredMemoryLoader;
+import minicode.memory.MemorySnapshot;
 import minicode.mcp.McpServerStatus;
 import minicode.mcp.McpServerSummary;
 import minicode.skills.SkillSummary;
 import minicode.tools.api.Tool;
 import minicode.tools.registry.ToolRegistry;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.StringJoiner;
 
 public final class SystemPromptBuilder {
+    private final LayeredMemoryLoader memoryLoader;
+
+    public SystemPromptBuilder() {
+        this(new LayeredMemoryLoader());
+    }
+
+    SystemPromptBuilder(LayeredMemoryLoader memoryLoader) {
+        this.memoryLoader = Objects.requireNonNull(memoryLoader, "memoryLoader");
+    }
+
     /**
      * 方法调用所需的输入参数集合。
      *
@@ -62,11 +72,10 @@ public final class SystemPromptBuilder {
                 If the user names a skill or clearly asks for a workflow that matches a listed skill, call load_skill before following it.
                 """.strip());
         prompt.add("""
-                Project and global instruction entry points:
-                - Read and follow project AGENTS.md when present.
-                - Read and follow global AGENTS.md when present.
-                - Java MiniCode currently uses AGENTS.md for project/global instructions; this is equivalent to the TS reference prompt's CLAUDE.md instruction entry point.
-                - Local project instructions override broad global preferences when they conflict.
+                Layered project memory entry points:
+                - Read and follow AGENTS.md, MINI.md, and .minicode/rules/*.md memory files when present.
+                - Memory is loaded from the global home, project root, and descendant directories in broad-to-specific order.
+                - More specific local project instructions override broader project or global preferences when they conflict.
                 """.strip());
         // 把 toolregister 加入
         prompt.add(toolSection(input.tools()));
@@ -124,9 +133,23 @@ public final class SystemPromptBuilder {
                 - Treat replacement text as a pointer to stored output, not as the full original output.
                 - Continue using available summaries and reread or rerun narrower commands when needed.
                 """.strip());
-        maybeRead(input.home().resolve("AGENTS.md"), "Global instructions", prompt);
-        maybeRead(input.cwd().resolve("AGENTS.md"), "Project instructions", prompt);
+        MemorySnapshot memory = loadMemory(input.home(), input.cwd());
+        String memorySection = memory.renderPromptSection();
+        if (!memorySection.isBlank()) {
+            prompt.add(memorySection);
+        }
         return prompt.toString();
+    }
+
+    /**
+     * 按照当前全局目录和工作目录重新加载分层项目记忆。
+     *
+     * @param home MiniCode 的数据目录
+     * @param cwd 当前工作目录
+     * @return 本次加载得到的最新记忆快照
+     */
+    public MemorySnapshot loadMemory(Path home, Path cwd) {
+        return memoryLoader.load(home, cwd);
     }
 
     private String toolSection(ToolRegistry registry) {
@@ -194,14 +217,4 @@ public final class SystemPromptBuilder {
         return value.substring(0, maxChars - 3) + "...";
     }
 
-    private void maybeRead(Path path, String label, StringJoiner prompt) {
-        if (!Files.exists(path)) {
-            return;
-        }
-        try {
-            prompt.add(label + " from " + path + ":\n" + Files.readString(path));
-        } catch (IOException exception) {
-            prompt.add(label + " from " + path + " could not be read: " + exception.getMessage());
-        }
-    }
 }

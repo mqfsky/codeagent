@@ -282,6 +282,14 @@ public final class RendererTuiShell {
             runCompactCommand();
             return true;
         }
+        if ("/memory".equals(trimmed)) {
+            runMemoryCommand();
+            return true;
+        }
+        if ("/init".equals(trimmed)) {
+            runInitCommand();
+            return true;
+        }
         synchronized (lock) {
             if (activeTurn != null && activeTurn.isAlive()) {
                 appendTranscriptLocked(TranscriptBlock.diagnostic("busy: wait for the current turn to finish"));
@@ -499,6 +507,22 @@ public final class RendererTuiShell {
             }
             case SKIPPED -> appendDiagnostic("compact: skipped " + result.reason().orElse("nothing to compact"));
             case FAILED -> appendDiagnostic("compact: failed " + result.reason().orElse("summary generation failed"));
+        }
+    }
+
+    private void runMemoryCommand() {
+        String report = services.memorySnapshot().renderReport(services.cwd());
+        synchronized (lock) {
+            appendTranscriptLocked(TranscriptBlock.assistant(report));
+            redrawLocked();
+        }
+    }
+
+    private void runInitCommand() {
+        String report = services.initializeProject();
+        synchronized (lock) {
+            appendTranscriptLocked(TranscriptBlock.assistant(report));
+            redrawLocked();
         }
     }
 

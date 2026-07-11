@@ -33,6 +33,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 
 import java.io.BufferedReader;
 import java.io.StringReader;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -107,6 +108,87 @@ class RendererTuiShellTest {
         assertTrue(latest.contains("compact: started"), latest);
         assertTrue(latest.contains("compact: skipped"), latest);
         assertFalse(latest.contains("user: /compact"), latest);
+    }
+
+    @Test
+    void rendererSlashMemoryDoesNotCallModelOrEnterSession() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.writeString(workspace.resolve("AGENTS.md"), "renderer-memory-marker");
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(100, 16));
+        RendererTuiBridge bridge = new RendererTuiBridge();
+        int[] modelCalls = {0};
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                messages -> {
+                    modelCalls[0]++;
+                    return new AssistantStep("unexpected", AssistantKind.FINAL);
+                },
+                bridge,
+                bridge
+        );
+        RendererTuiShell shell = new RendererTuiShell(
+                services,
+                new BufferedLineInput(new BufferedReader(new StringReader("/memory\n"))),
+                screen,
+                MiniTui.DEFAULT_MAX_STEPS,
+                bridge
+        );
+
+        shell.runOnce();
+
+        String latest = screen.latestText();
+        assertTrue(latest.contains("Memory files loaded: 1"), latest);
+        assertTrue(latest.contains("scope: project-root"), latest);
+        assertTrue(latest.contains("preview: renderer-memory-marker"), latest);
+        assertFalse(latest.contains("user: /memory"), latest);
+        assertEquals(0, modelCalls[0]);
+        assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
+    }
+
+    @Test
+    void rendererSlashInitCreatesFilesWithoutCallingModelOrEnteringSession() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Files.createDirectories(workspace.resolve(".git"));
+        Files.writeString(workspace.resolve("build.gradle.kts"), "plugins { java }");
+        Files.createDirectories(workspace.resolve("src/main/java"));
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(110, 18));
+        RendererTuiBridge bridge = new RendererTuiBridge();
+        int[] modelCalls = {0};
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                messages -> {
+                    modelCalls[0]++;
+                    return new AssistantStep("unexpected", AssistantKind.FINAL);
+                },
+                bridge,
+                bridge
+        );
+        RendererTuiShell shell = new RendererTuiShell(
+                services,
+                new BufferedLineInput(new BufferedReader(new StringReader("/init\n"))),
+                screen,
+                MiniTui.DEFAULT_MAX_STEPS,
+                bridge
+        );
+
+        shell.runOnce();
+
+        String latest = screen.latestText();
+        assertTrue(latest.contains("Init"), latest);
+        assertTrue(latest.contains("Detected         Java, Gradle"), latest);
+        assertTrue(latest.contains(".minicode/rules/gradle.md"), latest);
+        assertFalse(latest.contains("user: /init"), latest);
+        assertEquals(0, modelCalls[0]);
+        assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
+        assertTrue(Files.isRegularFile(workspace.resolve("MINI.md")));
+        assertTrue(Files.isRegularFile(workspace.resolve(".minicode/rules/gradle.md")));
     }
 
     @Test

@@ -155,4 +155,7 @@ minicode --version
 minicode --help
 ```
 
+在任一交互式 TUI 中，可以使用 `/init` 生成 `MINI.md` 和 `.minicode/rules/`，
+使用 `/memory` 查看当前注入 Prompt 的记忆文件，使用 `/compact` 压缩会话上下文。
+
 session 按 workspace cwd 隔离。恢复 session 时，请在同一个项目目录运行，或传入相同的 `--cwd`。

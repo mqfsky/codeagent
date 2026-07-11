@@ -99,6 +99,14 @@ public final class MiniTui {
             runCompactCommand();
             return true;
         }
+        if ("/memory".equals(trimmed)) {
+            output.println(services.memorySnapshot().renderReport(services.cwd()));
+            return true;
+        }
+        if ("/init".equals(trimmed)) {
+            output.println(services.initializeProject());
+            return true;
+        }
 
         // 2. 加载历史 messages：从最近一次 compact boundary 之后恢复可喂给模型的上下文。
         List<ChatMessage> history = services.sessionMessages();

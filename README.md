@@ -155,4 +155,7 @@ minicode --version
 minicode --help
 ```
 
+Inside either interactive TUI, use `/init` to generate `MINI.md` and `.minicode/rules/`,
+`/memory` to inspect the memory files loaded into the prompt, and `/compact` to compress the session context.
+
 Sessions are scoped by workspace cwd. To resume a session, run from the same project directory or pass the same `--cwd`.

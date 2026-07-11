@@ -28,8 +28,10 @@ import minicode.model.anthropic.AnthropicModelAdapter;
 import minicode.model.anthropic.AnthropicModelsApiClient;
 import minicode.model.anthropic.HttpAnthropicTransport;
 import minicode.model.openai.OpenAIModelAdapter;
+import minicode.init.ProjectInitializer;
 import minicode.mcp.McpRuntime;
 import minicode.mcp.McpServerSummary;
+import minicode.memory.MemorySnapshot;
 import minicode.mcp.McpToolHydrator;
 import minicode.permissions.api.PermissionPromptHandler;
 import minicode.permissions.api.PermissionService;
@@ -378,6 +380,24 @@ public record ApplicationServices(ToolRegistry toolRegistry,
 
     public List<ChatMessage> sessionMessages() {
         return sessionStore.loadMessagesSinceLatestCompactBoundary(sessionId, cwd.toString());
+    }
+
+    /**
+     * 重新读取当前工作区的分层记忆，供本地命令展示或下一轮 Prompt 构建使用。
+     *
+     * @return 当前时刻的最新记忆快照
+     */
+    public MemorySnapshot memorySnapshot() {
+        return systemPromptBuilder.loadMemory(home, cwd);
+    }
+
+    /**
+     * 检测当前 Java 项目结构并幂等生成 MiniCode 项目记忆文件。
+     *
+     * @return 可直接展示给用户的初始化报告
+     */
+    public String initializeProject() {
+        return ProjectInitializer.renderReport(new ProjectInitializer().initialize(cwd));
     }
 
     public ManualCompactResult manualCompact() {

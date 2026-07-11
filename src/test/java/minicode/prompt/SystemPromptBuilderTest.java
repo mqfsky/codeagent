@@ -36,8 +36,8 @@ class SystemPromptBuilderTest {
         Path cwd = tempDir.resolve("workspace");
         Files.createDirectories(home);
         Files.createDirectories(cwd);
-        Files.writeString(home.resolve("AGENTS.md"), "global instruction");
-        Files.writeString(cwd.resolve("AGENTS.md"), "project instruction");
+        Files.writeString(home.resolve("AGENTS.md"), "global-memory-content-marker");
+        Files.writeString(cwd.resolve("AGENTS.md"), "project-memory-content-marker");
         ToolRegistry registry = new ToolRegistry();
         registry.register(new FakeTool());
 
@@ -53,10 +53,14 @@ class SystemPromptBuilderTest {
         assertTrue(prompt.contains("If you need user clarification, call the ask_user tool with one concise question and wait for the user reply. Do not ask clarifying questions as plain assistant text."));
         assertTrue(prompt.contains("Do not choose subjective preferences such as colors, visual style, copy tone, or naming unless the user explicitly told you to decide yourself."));
         assertTrue(prompt.contains("When using read_file, pay attention to the header fields. If it says TRUNCATED: yes, continue reading with a larger offset before concluding that the file itself is cut off."));
-        assertTrue(prompt.contains("Global instructions"));
-        assertTrue(prompt.contains("global instruction"));
-        assertTrue(prompt.contains("Project instructions"));
-        assertTrue(prompt.contains("project instruction"));
+        assertTrue(prompt.contains("Layered project memory entry points:"));
+        assertTrue(prompt.contains("Read and follow AGENTS.md, MINI.md, and .minicode/rules/*.md memory files when present."));
+        assertTrue(prompt.contains("Memory is loaded from the global home, project root, and descendant directories in broad-to-specific order."));
+        assertTrue(prompt.contains("More specific local project instructions override broader project or global preferences when they conflict."));
+        assertTrue(prompt.contains("global-memory-content-marker"));
+        assertTrue(prompt.contains("project-memory-content-marker"));
+        assertEquals(1, occurrences(prompt, "global-memory-content-marker"));
+        assertEquals(1, occurrences(prompt, "project-memory-content-marker"));
         assertTrue(prompt.contains("fake_tool"));
         assertTrue(prompt.contains("Fake tool description"));
         assertTrue(prompt.contains("\"type\":\"object\""));
@@ -87,6 +91,39 @@ class SystemPromptBuilderTest {
         assertEquals(1, occurrences(prompt, "powershell -NoProfile -Command"));
         assertTrue(prompt.contains("exact-text"));
         assertTrue(prompt.contains("persisted-output"));
+    }
+
+    @Test
+    void promptInjectsLayeredMemoryOnceInGlobalRootAndNestedOrder() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path projectRoot = tempDir.resolve("project");
+        Path nestedCwd = projectRoot.resolve("services/api");
+        Files.createDirectories(home);
+        Files.createDirectories(projectRoot.resolve(".git"));
+        Files.createDirectories(nestedCwd);
+        Files.writeString(home.resolve("AGENTS.md"), "global-memory-marker");
+        Files.writeString(projectRoot.resolve("AGENTS.md"), "root-memory-marker");
+        Files.writeString(nestedCwd.resolve("AGENTS.md"), "nested-memory-marker");
+        Files.writeString(nestedCwd.resolve("MINI.md"), "nested-mini-memory-marker");
+
+        String prompt = new SystemPromptBuilder().build(new SystemPromptBuilder.Input(
+                home,
+                nestedCwd,
+                new ToolRegistry()
+        ));
+
+        int globalIndex = prompt.indexOf("global-memory-marker");
+        int rootIndex = prompt.indexOf("root-memory-marker");
+        int nestedIndex = prompt.indexOf("nested-memory-marker");
+        int nestedMiniIndex = prompt.indexOf("nested-mini-memory-marker");
+        assertTrue(globalIndex >= 0, "global memory should be present");
+        assertTrue(rootIndex > globalIndex, "project-root memory should follow global memory");
+        assertTrue(nestedIndex > rootIndex, "nested memory should follow project-root memory");
+        assertTrue(nestedMiniIndex > nestedIndex, "MINI.md should follow AGENTS.md in the same directory");
+        assertEquals(1, occurrences(prompt, "global-memory-marker"));
+        assertEquals(1, occurrences(prompt, "root-memory-marker"));
+        assertEquals(1, occurrences(prompt, "nested-memory-marker"));
+        assertEquals(1, occurrences(prompt, "nested-mini-memory-marker"));
     }
 
     @Test
