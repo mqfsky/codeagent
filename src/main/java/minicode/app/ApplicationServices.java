@@ -70,7 +70,8 @@ import java.util.UUID;
 import java.util.ArrayList;
 
 /**
- * 应用运行期的核心服务集合。
+ * 应用运行期的核心服务集合，扮演组装中心的角色，把运行 CodeAgent 所需的组件创建出来、连接起来，并统一提供给上层使用
+ *
  *
  * @param toolRegistry 应用注册并暴露给模型的工具注册表
  * @param permissionService 执行路径、命令、编辑和 MCP 调用前使用的权限服务
@@ -278,9 +279,9 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         CompactService compactService = new CompactService();
         AgentLoop agentLoop = runtimeConfig
                 .map(config -> new AgentLoop(modelAdapter, eventSink, registry, contextManager,
-                        new ContextStatsCalculator(new TokenAccountingService(), modelContextWindow(config, modelMetadata)),
-                        new AutoCompactController(compactService, AutoCompactPolicy.defaults())))
-                .orElseGet(() -> new AgentLoop(modelAdapter, eventSink, registry, contextManager));
+                        new ContextStatsCalculator(new TokenAccountingService(), modelContextWindow(config, modelMetadata)), // 上下文统计器
+                        new AutoCompactController(compactService, AutoCompactPolicy.defaults()))) // 自动压缩控制器，采用默认策略
+                .orElseGet(() -> new AgentLoop(modelAdapter, eventSink, registry, contextManager)); // 如果没有 runtimeconfig，就没上面两个
         return new ApplicationServices(registry, permissionService, contextManager, sessionStore,
                 persistenceRunner, agentLoop, modelAdapter, compactService, new SystemPromptBuilder(), workspacePathResolver,
                 skillRegistry, mcpRuntime, permissionStore, permissionStorePath, actualHome,
