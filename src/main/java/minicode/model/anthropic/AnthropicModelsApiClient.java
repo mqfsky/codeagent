@@ -59,10 +59,28 @@ public final class AnthropicModelsApiClient {
     }
 
     private String modelsUrl(String modelId) {
-        return runtimeConfig.baseUrl().replaceAll("/+$", "") + "/v1/models/" + modelId;
+        String baseUrl = runtimeConfig.baseUrl().replaceAll("/+$", "");
+        String modelsPath = baseUrl.endsWith("/v1") ? "/models/" : "/v1/models/";
+        return baseUrl + modelsPath + modelId;
     }
 
     private Map<String, String> headers() {
+        return switch (runtimeConfig.provider()) {
+            case OPENAI_COMPATIBLE -> openAiCompatibleHeaders();
+            case ANTHROPIC -> anthropicHeaders();
+            case MOCK -> Map.of();
+        };
+    }
+
+    private Map<String, String> openAiCompatibleHeaders() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        runtimeConfig.authToken()
+                .or(runtimeConfig::apiKey)
+                .ifPresent(credential -> headers.put("Authorization", "Bearer " + credential));
+        return headers;
+    }
+
+    private Map<String, String> anthropicHeaders() {
         Map<String, String> headers = new LinkedHashMap<>();
         headers.put("anthropic-version", "2023-06-01");
         runtimeConfig.authToken().ifPresent(token -> headers.put("Authorization", "Bearer " + token));

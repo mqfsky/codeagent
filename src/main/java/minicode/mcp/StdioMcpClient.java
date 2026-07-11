@@ -45,8 +45,11 @@ public final class StdioMcpClient implements McpClient {
         if (process != null && process.isAlive()) {
             return;
         }
+        // 启动进程，构建通信通道
         spawnProcess();
+        // 发送初始化请求
         request("initialize", initializeParams(), config.initializeTimeout(), McpErrorKind.HANDSHAKE_FAILED);
+        // 发送初始化完成的通知
         notify("notifications/initialized", MAPPER.createObjectNode());
     }
 
@@ -120,18 +123,23 @@ public final class StdioMcpClient implements McpClient {
     }
 
     private void spawnProcess() {
+        // 读取
         String command = config.command();
         if (command.isBlank()) {
             throw new McpException(McpErrorKind.START_FAILED,
                     "MCP server \"" + serverName + "\" has no command configured.");
         }
+        // 构造实际命令
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.command().addAll(config.args());
+        // 设置进程工作目录
         builder.directory(config.cwd()
                 .map(cwd -> baseCwd.resolve(cwd).toAbsolutePath().normalize())
                 .orElse(baseCwd)
                 .toFile());
+        // 添加 mcp 环境变量
         builder.environment().putAll(config.env());
+        // 启动进程
         try {
             process = builder.start();
             lastProcessHandle = process.toHandle();
@@ -159,7 +167,9 @@ public final class StdioMcpClient implements McpClient {
         message.put("id", id);
         message.put("method", method);
         message.set("params", params);
+        // 发送初始化请求
         writeMessage(message);
+        // 初始化响应
         JsonNode response = readMessageWithTimeout(timeout, method, failureKind);
         if (response.has("error")) {
             throw new McpException(failureKind, "MCP " + serverName + ": "
@@ -199,6 +209,7 @@ public final class StdioMcpClient implements McpClient {
     }
 
     private JsonNode readMessageWithTimeout(Duration timeout, String method, McpErrorKind failureKind) {
+//        从 MCP 子进程的 stdout 读取响应
         CompletableFuture<JsonNode> future = CompletableFuture.supplyAsync(() -> readMessage(method, failureKind));
         try {
             return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);

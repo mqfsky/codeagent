@@ -32,6 +32,53 @@ class AnthropicModelsApiClientTest {
     }
 
     @Test
+    void doesNotDuplicateV1WhenBaseUrlAlreadyContainsIt() {
+        RecordingTransport transport = new RecordingTransport(200, """
+                {"id":"deepseek-ai/DeepSeek-V4-Flash","max_input_tokens":1048576}
+                """);
+        AnthropicModelsApiClient client = new AnthropicModelsApiClient(
+                config("https://api.siliconflow.cn/v1/"), transport);
+
+        Optional<ModelMetadata> metadata = client.fetch("deepseek-ai/DeepSeek-V4-Flash");
+
+        assertTrue(metadata.isPresent());
+        assertEquals("https://api.siliconflow.cn/v1/models/deepseek-ai/DeepSeek-V4-Flash", transport.url);
+    }
+
+    @Test
+    void openAiCompatibleApiKeyUsesBearerWithoutAnthropicHeaders() {
+        RecordingTransport transport = metadataTransport();
+        AnthropicModelsApiClient client = new AnthropicModelsApiClient(
+                config(ProviderKind.OPENAI_COMPATIBLE, Optional.of("openai-key"), Optional.empty()), transport);
+
+        assertTrue(client.fetch("deepseek-ai/DeepSeek-V4-Flash").isPresent());
+        assertEquals(Map.of("Authorization", "Bearer openai-key"), transport.headers);
+    }
+
+    @Test
+    void anthropicApiKeyUsesApiKeyAndVersionHeaders() {
+        RecordingTransport transport = metadataTransport();
+        AnthropicModelsApiClient client = new AnthropicModelsApiClient(
+                config(ProviderKind.ANTHROPIC, Optional.of("anthropic-key"), Optional.empty()), transport);
+
+        assertTrue(client.fetch("claude-opus-4-7").isPresent());
+        assertEquals("anthropic-key", transport.headers.get("x-api-key"));
+        assertEquals("2023-06-01", transport.headers.get("anthropic-version"));
+        assertFalse(transport.headers.containsKey("Authorization"));
+    }
+
+    @Test
+    void openAiCompatibleAuthTokenTakesPrecedenceOverApiKey() {
+        RecordingTransport transport = metadataTransport();
+        AnthropicModelsApiClient client = new AnthropicModelsApiClient(
+                config(ProviderKind.OPENAI_COMPATIBLE, Optional.of("openai-key"), Optional.of("auth-token")),
+                transport);
+
+        assertTrue(client.fetch("deepseek-ai/DeepSeek-V4-Flash").isPresent());
+        assertEquals(Map.of("Authorization", "Bearer auth-token"), transport.headers);
+    }
+
+    @Test
     void returnsEmptyWhenEndpointDoesNotSupportModelsApi() {
         AnthropicModelsApiClient client = new AnthropicModelsApiClient(config(), new RecordingTransport(404, "{}"));
 
@@ -53,17 +100,37 @@ class AnthropicModelsApiClientTest {
     }
 
     private static RuntimeConfig config() {
+        return config("https://example.test");
+    }
+
+    private static RuntimeConfig config(String baseUrl) {
+        return config(ProviderKind.ANTHROPIC, baseUrl, Optional.empty(), Optional.of("secret-token"));
+    }
+
+    private static RuntimeConfig config(ProviderKind provider, Optional<String> apiKey,
+                                        Optional<String> authToken) {
+        return config(provider, "https://example.test", apiKey, authToken);
+    }
+
+    private static RuntimeConfig config(ProviderKind provider, String baseUrl, Optional<String> apiKey,
+                                        Optional<String> authToken) {
         return new RuntimeConfig(
-                ProviderKind.ANTHROPIC,
+                provider,
                 "claude-opus-4-7",
-                "https://example.test",
-                Optional.empty(),
-                Optional.of("secret-token"),
+                baseUrl,
+                apiKey,
+                authToken,
                 Optional.empty(),
                 Optional.empty(),
                 Duration.ofSeconds(30),
                 "test"
         );
+    }
+
+    private static RecordingTransport metadataTransport() {
+        return new RecordingTransport(200, """
+                {"id":"test-model","max_input_tokens":128000,"max_tokens":8192}
+                """);
     }
 
     private static final class RecordingTransport implements AnthropicTransport {

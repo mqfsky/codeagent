@@ -202,6 +202,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                                              AgentEventSink eventSink,
                                              PermissionPromptHandler permissionPromptHandler) {
         Objects.requireNonNull(runtimeConfig, "runtimeConfig");
+
         return createWithModelFactory(home, cwd, sessionId, eventSink, permissionPromptHandler, (registry, metadata) -> {
             if (runtimeConfig.provider() == ProviderKind.MOCK) {
                 return new MockModelAdapter("mock final");
@@ -241,20 +242,30 @@ public record ApplicationServices(ToolRegistry toolRegistry,
 
         // 注册工具
         ToolRegistry registry = createBuiltInToolRegistry(permissionService, workspacePathResolver, skillRegistry);
+
+        // 这个 config 目前是配置文件，目前配置文件中没有配 mcpserver，mcpruntime 不生效
+        // TODO 配置 MCP
         McpRuntime mcpRuntime = runtimeConfig
                 .map(config -> McpToolHydrator.hydrate(config.mcpServers(), permissionService, actualCwd))
                 .orElseGet(McpRuntime::empty);
+        // 注册 mcp 工具
         mcpRuntime.tools().forEach(registry::register);
+
+        // 上下文管理工具
         ContextManager contextManager = new ContextManager(
                 new ToolResultStorage(actualHome.resolve("tool-results")),
                 LARGE_TOOL_RESULT_THRESHOLD_CHARS,
                 TOOL_RESULT_BATCH_BUDGET_CHARS,
                 TOOL_RESULT_PREVIEW_CHARS
         );
+        // 向 config 里配置的 url 发送请求，获取 metadata
         Optional<ModelMetadata> modelMetadata = runtimeConfig.flatMap(ApplicationServices::fetchModelMetadata);
         ModelAdapter modelAdapter = Objects.requireNonNull(modelFactory.apply(registry, modelMetadata), "modelAdapter");
+
+        // 创建会话存储服务
         SessionStore sessionStore = new SessionStore(actualHome.resolve("sessions"));
         Optional<String> lastEventUuid = sessionStore.latestEventUuid(sessionId, actualCwd.toString());
+        // 持久化服务
         SessionPersistenceRunner persistenceRunner = new SessionPersistenceRunner(
                 sessionStore,
                 new SessionEventFactory(sessionId, actualCwd.toString(),
@@ -262,6 +273,8 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                         () -> UUID.randomUUID().toString(),
                         lastEventUuid)
         );
+
+        // 上下文压缩服务
         CompactService compactService = new CompactService();
         AgentLoop agentLoop = runtimeConfig
                 .map(config -> new AgentLoop(modelAdapter, eventSink, registry, contextManager,
@@ -318,6 +331,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                                                          WorkspacePathResolver workspacePathResolver,
                                                          SkillRegistry skillRegistry) {
         ToolRegistry registry = new ToolRegistry();
+        // 维护一个 map 保存，name -> tool
         registry.register(new AskUserTool());
         registry.register(new LoadSkillTool(skillRegistry));
         registry.register(new ReadFileTool(ReadFilePathAccess.fromPermissionService(permissionService),

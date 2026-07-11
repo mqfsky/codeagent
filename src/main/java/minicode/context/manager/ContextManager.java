@@ -26,6 +26,9 @@ import java.security.NoSuchAlgorithmException;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 
+/**
+ * 上下文管理工具
+ */
 public class ContextManager {
     // microcompact 清理旧工具结果后，留在上下文里的占位文本, 为了告诉模型：这里原来有工具输出，但为了腾上下文空间已经清掉了；这个输出之前在本 session 里已经返回过。
     private static final String MICROCOMPACT_MARKER = "[Output cleared for context space. Full output was already returned earlier in this session.]";

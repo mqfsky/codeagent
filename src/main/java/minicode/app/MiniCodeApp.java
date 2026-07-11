@@ -35,7 +35,7 @@ import java.util.List;
 
 /**
  * CodeAgent 版本的命令行入口。
- *
+ * java -jar target/codeagent.jar
  * <p>这个类负责完成进程启动阶段的工作：解析命令行参数、加载运行配置、
  * 初始化会话与 TUI 输入输出环境，并把真正的交互循环交给 {@link MiniTui}
  * 或 {@link RendererTuiShell}。</p>
