@@ -25,18 +25,18 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(32, 6));
 
         assertEquals(List.of(
-                "CodeAgent                       ",
-                "user: new user                  ",
-                "new assistant" + " ".repeat(19),
-                "--------------------------------",
-                "Thinking...                     ",
-                "mini-code> next task            "
+                " CodeAgent " + "─".repeat(21),
+                "❯ You › new user" + " ".repeat(16),
+                "● CodeAgent › new assistant" + " ".repeat(5),
+                "─".repeat(32),
+                "● Thinking..." + " ".repeat(19),
+                "› next task" + " ".repeat(21)
         ), frame.lines());
         assertEquals(32, frame.width());
         assertEquals(6, frame.height());
         assertEquals(6, frame.cursorRow());
-        assertEquals(21, frame.cursorColumn());
-        assertFalse(frame.lines().contains("user: old user                  "));
+        assertEquals(12, frame.cursorColumn());
+        assertFalse(frame.text().contains("❯ You › old user"));
     }
 
     @Test
@@ -50,7 +50,7 @@ class TuiRendererSnapshotTest {
 
         assertEquals(List.of(TranscriptBlock.user("hello")), done.transcript());
         assertTrue(frame.lines().stream().noneMatch(line -> line.contains("Thinking...")));
-        assertTrue(frame.lines().stream().anyMatch(line -> line.contains("> ")));
+        assertTrue(frame.lines().stream().anyMatch(line -> line.contains("› ")));
     }
 
     @Test
@@ -62,12 +62,12 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(20, 8));
 
         assertEquals(8, frame.height());
-        assertEquals("CodeAgent" + " ".repeat(11), frame.lines().getFirst());
-        assertEquals("-".repeat(20), frame.lines().get(5));
-        assertEquals("Ready" + " ".repeat(15), frame.lines().get(6));
-        assertEquals("mini-code> " + " ".repeat(9), frame.lines().get(7));
+        assertEquals(" CodeAgent " + "─".repeat(9), frame.lines().getFirst());
+        assertEquals("─".repeat(20), frame.lines().get(5));
+        assertEquals("● Ready" + " ".repeat(13), frame.lines().get(6));
+        assertEquals("› " + " ".repeat(18), frame.lines().get(7));
         assertEquals(8, frame.cursorRow());
-        assertEquals(12, frame.cursorColumn());
+        assertEquals(3, frame.cursorColumn());
     }
 
     @Test
@@ -84,9 +84,9 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(30, 6));
 
         String text = frame.text();
-        assertTrue(text.contains("user: one"), text);
-        assertTrue(text.contains("two"), text);
-        assertFalse(text.contains("user: three"), text);
+        assertTrue(text.contains("❯ You › one"), text);
+        assertTrue(text.contains("● CodeAgent › two"), text);
+        assertFalse(text.contains("❯ You › three"), text);
         assertFalse(text.contains("four"), text);
     }
 
@@ -100,10 +100,10 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(48, 6));
 
         String text = frame.text();
-        assertTrue(text.contains("ask_user: Which file should I edit?"), text);
+        assertTrue(text.contains("? Question › Which file should I edit?"), text);
         assertTrue(text.contains("Waiting for user answer..."), text);
-        assertTrue(text.contains("answer> "), text);
-        assertFalse(text.contains("|"), text);
+        assertTrue(text.contains("answer › "), text);
+        assertFalse(text.contains(" | "), text);
     }
 
     @Test
@@ -119,11 +119,11 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(50, 12));
 
         String text = frame.text();
-        assertTrue(text.contains("tool: run_command ok"), text);
-        assertTrue(text.contains("... truncated"), text);
+        assertTrue(text.contains("◇ run_command  ✓"), text);
+        assertTrue(text.contains("… 34 more lines"), text);
         assertTrue(text.contains("Running run_command..."), text);
-        assertTrue(text.contains("busy> "), text);
-        assertFalse(text.contains("|"), text);
+        assertTrue(text.contains("… "), text);
+        assertFalse(text.contains(" | "), text);
         assertFalse(text.contains("line-40"), text);
     }
 
@@ -135,7 +135,7 @@ class TuiRendererSnapshotTest {
 
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(40, 5));
 
-        assertTrue(frame.text().contains("Ready | context 42%"), frame.text());
+        assertTrue(frame.text().contains("● Ready  ·  context 42%"), frame.text());
         assertEquals(List.of(TranscriptBlock.user("hello")), state.transcript());
     }
 
@@ -149,10 +149,50 @@ class TuiRendererSnapshotTest {
         RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(52, 6));
 
         String text = frame.text();
-        assertTrue(text.contains("permission: pending command execution"), text);
-        assertTrue(text.contains("permission> "), text);
-        assertFalse(text.contains("|"), text);
+        assertTrue(text.contains("! Permission › pending command execution"), text);
+        assertTrue(text.contains("allow › "), text);
+        assertFalse(text.contains(" | "), text);
         assertTrue(text.contains("Waiting for approval..."), text);
+    }
+
+    @Test
+    void assistantMarkdownUsesTerminalFriendlyHeadingsListsCodeAndTables() {
+        RenderState state = RenderState.empty().appendTranscript(TranscriptBlock.assistant("""
+                ## Usage
+                - Run `git status`
+                | field | required |
+                | --- | --- |
+                | command | yes |
+                ```json
+                {"command":"git"}
+                ```
+                """));
+
+        String text = new TuiRenderer().render(state, new TerminalSize(60, 14)).text();
+
+        assertTrue(text.contains("◆ Usage"), text);
+        assertTrue(text.contains("• Run ‹git status›"), text);
+        assertTrue(text.contains("field  │  required"), text);
+        assertFalse(text.contains("| --- |"), text);
+        assertTrue(text.contains("┌─ json"), text);
+        assertTrue(text.contains("│ {\"command\":\"git\"}"), text);
+        assertFalse(text.contains("```"), text);
+    }
+
+    @Test
+    void oversizedScrollOffsetClampsToOldestRealContentInsteadOfBlankSpace() {
+        RenderState state = RenderState.empty()
+                .withTranscript(List.of(
+                        TranscriptBlock.user("oldest"),
+                        TranscriptBlock.assistant("middle"),
+                        TranscriptBlock.user("newest")
+                ))
+                .withScrollOffset(10_000);
+
+        RenderFrame frame = new TuiRenderer().render(state, new TerminalSize(40, 6));
+
+        assertTrue(frame.text().contains("❯ You › oldest"), frame.text());
+        assertTrue(frame.text().contains("● CodeAgent › middle"), frame.text());
     }
 
     @Test

@@ -23,7 +23,7 @@ model -> tool -> model
 ## 已对齐的核心能力
 
 - 基础 agent loop：支持模型输出、工具调用、工具结果回传、继续生成最终答复。
-- Anthropic-compatible provider：可以连接兼容 Anthropic Messages API 的模型服务。
+- Anthropic-compatible / OpenAI-compatible provider：可以连接兼容 Anthropic Messages API 或 OpenAI Chat Completions API 的模型服务。
 - 本地 workspace：默认以当前目录作为工作区，也支持 `--cwd` 指定工作区。
 - 内置工具：支持读文件、列目录、搜索、编辑、写文件、执行命令、询问用户。
 - 工具注册边界：工具统一通过 registry 注册、校验和执行。

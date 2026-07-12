@@ -46,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 public final class RendererTuiShell {
     private static final int PERMISSION_DETAIL_LINES = 18;
     private static final int PERMISSION_DETAIL_LINE_CHARS = 180;
+    private static final int MOUSE_WHEEL_SCROLL_LINES = 3;
 
     private final ApplicationServices services;
     private final TuiInput input;
@@ -214,12 +215,20 @@ public final class RendererTuiShell {
         Objects.requireNonNull(event, "event");
         return switch (event.kind()) {
             case EOF -> false;
-            case PAGE_UP, SCROLL_UP -> {
-                scrollUp();
+            case PAGE_UP -> {
+                scrollUp(pageScrollLines());
                 yield true;
             }
-            case PAGE_DOWN, SCROLL_DOWN -> {
-                scrollDown();
+            case PAGE_DOWN -> {
+                scrollDown(pageScrollLines());
+                yield true;
+            }
+            case SCROLL_UP -> {
+                scrollUp(MOUSE_WHEEL_SCROLL_LINES);
+                yield true;
+            }
+            case SCROLL_DOWN -> {
+                scrollDown(MOUSE_WHEEL_SCROLL_LINES);
                 yield true;
             }
             case CURSOR_LEFT -> {
@@ -359,11 +368,11 @@ public final class RendererTuiShell {
         synchronized (lock) {
             switch (trimmed.toLowerCase(Locale.ROOT)) {
                 case "/scroll-up", "/pageup" -> {
-                    scrollUpLocked();
+                    scrollUpLocked(pageScrollLines());
                     return true;
                 }
                 case "/scroll-down", "/pagedown" -> {
-                    scrollDownLocked();
+                    scrollDownLocked(pageScrollLines());
                     return true;
                 }
                 case "/bottom" -> {
@@ -378,28 +387,31 @@ public final class RendererTuiShell {
         }
     }
 
-    private void scrollUp() {
+    private void scrollUp(int lines) {
         synchronized (lock) {
-            scrollUpLocked();
+            scrollUpLocked(lines);
         }
     }
 
-    private void scrollDown() {
+    private void scrollDown(int lines) {
         synchronized (lock) {
-            scrollDownLocked();
+            scrollDownLocked(lines);
         }
     }
 
-    private void scrollUpLocked() {
-        int page = Math.max(1, screen.size().rows() - 4);
-        state = state.withScrollOffset(state.scrollOffset() + page);
+    private void scrollUpLocked(int lines) {
+        int maxOffset = renderer.maxScrollOffset(state, screen.size());
+        state = state.withScrollOffset(Math.min(maxOffset, state.scrollOffset() + Math.max(1, lines)));
         redrawLocked();
     }
 
-    private void scrollDownLocked() {
-        int page = Math.max(1, screen.size().rows() - 4);
-        state = state.withScrollOffset(Math.max(0, state.scrollOffset() - page));
+    private void scrollDownLocked(int lines) {
+        state = state.withScrollOffset(Math.max(0, state.scrollOffset() - Math.max(1, lines)));
         redrawLocked();
+    }
+
+    private int pageScrollLines() {
+        return Math.max(1, screen.size().rows() - 4);
     }
 
     private PermissionPromptResult handlePermissionInput(String line) {

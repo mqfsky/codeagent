@@ -74,9 +74,9 @@ class RendererTuiShellTest {
         shell.awaitIdle(Duration.ofSeconds(2));
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("user: hello"), latest);
+        assertTrue(latest.contains("❯ You › hello"), latest);
         assertTrue(latest.contains("final answer"), latest);
-        assertEquals(1, countOccurrences(latest, "user: hello"), latest);
+        assertEquals(1, countOccurrences(latest, "❯ You › hello"), latest);
         assertFalse(latest.contains("Thinking..."), latest);
         assertFalse(latest.contains("turn_stop: FINAL"), latest);
         assertFalse(latest.contains("status: Thinking..."), latest);
@@ -107,7 +107,7 @@ class RendererTuiShellTest {
         String latest = screen.latestText();
         assertTrue(latest.contains("compact: started"), latest);
         assertTrue(latest.contains("compact: skipped"), latest);
-        assertFalse(latest.contains("user: /compact"), latest);
+        assertFalse(latest.contains("❯ You › /compact"), latest);
     }
 
     @Test
@@ -144,7 +144,7 @@ class RendererTuiShellTest {
         assertTrue(latest.contains("Memory files loaded: 1"), latest);
         assertTrue(latest.contains("scope: project-root"), latest);
         assertTrue(latest.contains("preview: renderer-memory-marker"), latest);
-        assertFalse(latest.contains("user: /memory"), latest);
+        assertFalse(latest.contains("❯ You › /memory"), latest);
         assertEquals(0, modelCalls[0]);
         assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
     }
@@ -184,7 +184,7 @@ class RendererTuiShellTest {
         assertTrue(latest.contains("Init"), latest);
         assertTrue(latest.contains("Detected         Java, Gradle"), latest);
         assertTrue(latest.contains(".codeagent/rules/gradle.md"), latest);
-        assertFalse(latest.contains("user: /init"), latest);
+        assertFalse(latest.contains("❯ You › /init"), latest);
         assertEquals(0, modelCalls[0]);
         assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
         assertTrue(Files.isRegularFile(workspace.resolve("CODEAGENT.md")));
@@ -219,7 +219,7 @@ class RendererTuiShellTest {
         );
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("user: old question"), latest);
+        assertTrue(latest.contains("❯ You › old question"), latest);
         assertTrue(latest.contains("old answer"), latest);
     }
 
@@ -254,7 +254,7 @@ class RendererTuiShellTest {
         shell.runOnce();
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("user: old-1"), latest);
+        assertTrue(latest.contains("❯ You › old-1"), latest);
         assertTrue(latest.contains("old-2"), latest);
         assertFalse(latest.contains("new-2"), latest);
     }
@@ -290,7 +290,7 @@ class RendererTuiShellTest {
         shell.runOnce();
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("user: old-1"), latest);
+        assertTrue(latest.contains("❯ You › old-1"), latest);
         assertTrue(latest.contains("old-2"), latest);
         assertFalse(latest.contains("new-2"), latest);
     }
@@ -326,9 +326,52 @@ class RendererTuiShellTest {
         shell.runOnce();
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("user: old mouse"), latest);
+        assertTrue(latest.contains("❯ You › old mouse"), latest);
         assertTrue(latest.contains("old answer"), latest);
         assertFalse(latest.contains("new answer"), latest);
+    }
+
+    @Test
+    void repeatedMouseWheelEventsStayWithinHistoryAndOneWheelDownReturnsToLatestContent() {
+        Path home = tempDir.resolve("home");
+        Path workspace = tempDir.resolve("workspace").toAbsolutePath().normalize();
+        SessionStore store = new SessionStore(home.resolve("sessions"));
+        SessionEventFactory factory = new SessionEventFactory("session-1", workspace.toString());
+        store.append(factory.message(new UserMessage("old-1")));
+        store.append(factory.message(new AssistantMessage("old-2")));
+        store.append(factory.message(new UserMessage("new-1")));
+        store.append(factory.message(new AssistantMessage("new-2")));
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(40, 6));
+        RendererTuiBridge bridge = new RendererTuiBridge();
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                new MockModelAdapter("unused"),
+                bridge,
+                bridge
+        );
+        RendererTuiShell shell = new RendererTuiShell(
+                services,
+                new ScriptedTuiInput(List.of(
+                        TuiInputEvent.scrollUp(),
+                        TuiInputEvent.scrollUp(),
+                        TuiInputEvent.scrollUp(),
+                        TuiInputEvent.scrollDown()
+                )),
+                screen,
+                MiniTui.DEFAULT_MAX_STEPS,
+                bridge
+        );
+
+        for (int index = 0; index < 4; index++) {
+            shell.runOnce();
+        }
+
+        String latest = screen.latestText();
+        assertTrue(latest.contains("❯ You › new-1"), latest);
+        assertTrue(latest.contains("● CodeAgent › new-2"), latest);
+        assertFalse(latest.contains("history ↑"), latest);
     }
 
     @Test
@@ -355,7 +398,7 @@ class RendererTuiShellTest {
         shell.runOnce();
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("mini-code> hi"), latest);
+        assertTrue(latest.contains("› hi"), latest);
         assertFalse(latest.contains("|"), latest);
     }
 
@@ -393,7 +436,7 @@ class RendererTuiShellTest {
         }
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("mini-code> aXbYc"), latest);
+        assertTrue(latest.contains("› aXbYc"), latest);
         assertFalse(latest.contains("OAOA"), latest);
         assertFalse(latest.contains("ODOC"), latest);
     }
@@ -430,9 +473,9 @@ class RendererTuiShellTest {
         shell.awaitIdle(Duration.ofSeconds(2));
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("ask_user: Need a filename"), latest);
-        assertTrue(latest.contains("answer> "), latest);
-        assertFalse(latest.contains("answer> |"), latest);
+        assertTrue(latest.contains("? Question › Need a filename"), latest);
+        assertTrue(latest.contains("answer › "), latest);
+        assertFalse(latest.contains("answer › |"), latest);
         assertEquals(1, countOccurrences(latest, "Need a filename"), latest);
         assertFalse(latest.contains("turn_stop: FINAL"), latest);
     }
@@ -465,8 +508,8 @@ class RendererTuiShellTest {
         shell.awaitIdle(Duration.ofSeconds(2));
 
         String latest = screen.latestText();
-        assertEquals(1, countOccurrences(latest, "tool: ask_user"), latest);
-        assertTrue(latest.contains("tool: ask_user ok"), latest);
+        assertEquals(1, countOccurrences(latest, "◇ ask_user"), latest);
+        assertTrue(latest.contains("◇ ask_user  ✓"), latest);
     }
 
     @Test
@@ -500,8 +543,8 @@ class RendererTuiShellTest {
         shell.awaitIdle(Duration.ofSeconds(2));
 
         String latest = screen.latestText();
-        assertEquals(1, countOccurrences(latest, "tool: read_file"), latest);
-        assertTrue(latest.contains("tool: read_file ok"), latest);
+        assertEquals(1, countOccurrences(latest, "◇ read_file"), latest);
+        assertTrue(latest.contains("◇ read_file  ✓"), latest);
         assertTrue(latest.contains("path=demo.txt"), latest);
     }
 
@@ -616,19 +659,19 @@ class RendererTuiShellTest {
         );
 
         shell.runOnce();
-        waitUntil(() -> screen.latestText().contains("permission>"), Duration.ofSeconds(2));
+        waitUntil(() -> screen.latestText().contains("allow ›"), Duration.ofSeconds(2));
         String pending = screen.latestText();
-        assertTrue(pending.contains("permission: pending"), pending);
+        assertTrue(pending.contains("! Permission › pending"), pending);
         assertTrue(pending.contains("[1]"), pending);
         assertTrue(pending.contains("deny_feedback"), pending);
         shell.runOnce();
-        waitUntil(() -> screen.latestText().contains("feedback>"), Duration.ofSeconds(2));
+        waitUntil(() -> screen.latestText().contains("feedback ›"), Duration.ofSeconds(2));
         shell.runOnce();
         shell.awaitIdle(Duration.ofSeconds(2));
 
         String latest = screen.latestText();
-        assertTrue(latest.contains("permission: denied deny_feedback"), latest);
-        assertTrue(latest.contains("tool: run_command error"), latest);
+        assertTrue(latest.contains("! Permission › denied deny_feedback"), latest);
+        assertTrue(latest.contains("◇ run_command  ✗"), latest);
         assertFalse(latest.contains("choices:"), latest);
         assertFalse(latest.contains("[1] allow_once"), latest);
         assertFalse(latest.contains("Permission choice:"), latest);
@@ -685,10 +728,10 @@ class RendererTuiShellTest {
 
         java.util.concurrent.CompletableFuture<?> prompt = java.util.concurrent.CompletableFuture.runAsync(
                 () -> shell.requestPermission(request));
-        waitUntil(() -> screen.latestText().contains("permission>"), Duration.ofSeconds(2));
+        waitUntil(() -> screen.latestText().contains("allow ›"), Duration.ofSeconds(2));
 
         String pending = screen.latestText();
-        assertTrue(pending.contains("permission: pending Edit review"), pending);
+        assertTrue(pending.contains("! Permission › pending Edit review"), pending);
         assertTrue(pending.contains("Diff preview:"), pending);
         assertTrue(pending.contains("+newLine();"), pending);
         assertTrue(pending.contains("[1] allow_once"), pending);

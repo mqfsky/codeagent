@@ -24,7 +24,7 @@ CodeAgent is built for local development workflows: reading files, searching cod
 
 ## Features
 
-- Anthropic-compatible provider path
+- Anthropic-compatible and OpenAI-compatible provider paths
 - terminal-first coding agent workflow
 - built-in tools: file reading, search, edit, write, command execution, `ask_user`, and `load_skill`
 - permission review before sensitive actions
@@ -130,7 +130,7 @@ cd .\manual-test-workspace
 
 ## Provider
 
-Example Anthropic-compatible endpoint:
+Example Anthropic-compatible or OpenAI-compatible endpoint:
 
 ```powershell
 $env:CODEAGENT_PROVIDER="anthropic-compatible"
