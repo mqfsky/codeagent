@@ -57,6 +57,13 @@ class JLineTuiInputTest {
     }
 
     @Test
+    void ignoresNonWheelSgrMouseEventsWithoutEndingTheTui() throws Exception {
+        JLineTuiInput input = input("\u001B[<0;10;5M\u001B[<0;10;5mx");
+
+        assertEquals(TuiInputEvent.character('x'), input.readEvent());
+    }
+
+    @Test
     void parsesCharactersBackspaceEnterAndEof() throws Exception {
         JLineTuiInput input = input("a\b\r");
 

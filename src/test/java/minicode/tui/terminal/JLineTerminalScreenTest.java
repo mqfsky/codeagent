@@ -82,7 +82,7 @@ class JLineTerminalScreenTest {
     }
 
     @Test
-    void screenKeepsMouseSelectionAvailableAndEnablesAlternateScroll() throws Exception {
+    void screenEnablesAndRestoresAlternateScrollAndSgrMouseTracking() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         Terminal terminal = terminal(output);
 
@@ -92,8 +92,10 @@ class JLineTerminalScreenTest {
         String text = output.toString(StandardCharsets.UTF_8);
         assertTrue(text.contains("\u001B[?1007h"), text);
         assertTrue(text.contains("\u001B[?1007l"), text);
-        assertTrue(!text.contains("\u001B[?1000h"), text);
-        assertTrue(!text.contains("\u001B[?1006h"), text);
+        assertTrue(text.contains("\u001B[?1000h"), text);
+        assertTrue(text.contains("\u001B[?1000l"), text);
+        assertTrue(text.contains("\u001B[?1006h"), text);
+        assertTrue(text.contains("\u001B[?1006l"), text);
     }
 
     @Test

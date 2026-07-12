@@ -104,7 +104,8 @@ public final class JLineTuiInput implements TuiInput {
         return switch (parseInt(firstNumber.toString())) {
             case 64 -> TuiInputEvent.scrollUp();
             case 65 -> TuiInputEvent.scrollDown();
-            default -> TuiInputEvent.eof();
+            // 鼠标追踪会同时上报点击/释放事件；TUI 暂不处理它们，继续等待下一个有效输入。
+            default -> readEvent();
         };
     }
 

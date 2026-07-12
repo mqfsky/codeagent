@@ -25,6 +25,10 @@ public final class JLineTerminalScreen implements TerminalScreen {
     private static final String EXIT_ALTERNATE_SCREEN = "\u001B[?1049l";
     private static final String ENABLE_ALTERNATE_SCROLL = "\u001B[?1007h";
     private static final String DISABLE_ALTERNATE_SCROLL = "\u001B[?1007l";
+    private static final String ENABLE_MOUSE_TRACKING = "\u001B[?1000h";
+    private static final String DISABLE_MOUSE_TRACKING = "\u001B[?1000l";
+    private static final String ENABLE_SGR_MOUSE = "\u001B[?1006h";
+    private static final String DISABLE_SGR_MOUSE = "\u001B[?1006l";
     private static final String CURSOR_HOME = "\u001B[H";
     private static final String CLEAR_SCREEN = "\u001B[2J";
     private static final String SHOW_CURSOR = "\u001B[?25h";
@@ -38,6 +42,8 @@ public final class JLineTerminalScreen implements TerminalScreen {
         this.writer = terminal.writer();
         writer.print(ENTER_ALTERNATE_SCREEN);
         writer.print(ENABLE_ALTERNATE_SCROLL);
+        writer.print(ENABLE_MOUSE_TRACKING);
+        writer.print(ENABLE_SGR_MOUSE);
         writer.print(SHOW_CURSOR);
         writer.print(CLEAR_SCREEN);
         writer.print(CURSOR_HOME);
@@ -97,6 +103,8 @@ public final class JLineTerminalScreen implements TerminalScreen {
             return;
         }
         closed = true;
+        writer.print(DISABLE_SGR_MOUSE);
+        writer.print(DISABLE_MOUSE_TRACKING);
         writer.print(DISABLE_ALTERNATE_SCROLL);
         writer.print(SHOW_CURSOR);
         writer.print(EXIT_ALTERNATE_SCREEN);
