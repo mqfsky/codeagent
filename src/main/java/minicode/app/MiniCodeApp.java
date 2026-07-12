@@ -268,21 +268,24 @@ public final class MiniCodeApp {
         SessionService sessionService = new SessionService(new SessionStore(actualHome.resolve("sessions")));
 
         // session 管理命令到这里就结束，不会继续创建模型、工具和 TUI。
+        // 捕获 session list， session rename 等类似指令
         if (appArgs.sessionCommand()) {
             handleSessionCommand(appArgs, sessionService, actualCwd.toString(), out);
             return;
         }
 
-        // 默认新建 UUID session；如果位置参数提供 sessionId，则复用该 id。
+        // 默认新建 UUID session；如果位置参数提供 sessionId，则复用该 id
+        // codeagent abc-123
         String sessionId = appArgs.sessionId().orElseGet(() -> UUID.randomUUID().toString());
 
         // --resume 要求目标 session 在当前 cwd 下存在，校验通过后沿用原 sessionId。
         if (appArgs.resumeSessionId() != null) {
+            // 是否存在于当前工作目录中，能不能继续使用，若不能则会抛出异常
             sessionService.requireResumable(actualCwd.toString(), appArgs.resumeSessionId());
             sessionId = appArgs.resumeSessionId();
         }
 
-        // --fork 会复制源 session 的历史，并生成一个新的 sessionId。
+        // --fork 会复制源 session 的历史，创建新 session 文件并生成一个新的 sessionId。
         if (appArgs.forkSessionId() != null) {
             sessionId = sessionService.fork(actualCwd.toString(), appArgs.forkSessionId());
             out.println("Forked session " + appArgs.forkSessionId() + " -> " + sessionId);

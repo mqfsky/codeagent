@@ -132,20 +132,37 @@ public final class SessionStore {
         }
     }
 
+    // 读取 session 元数据
     public Optional<SessionMetadata> readMetadata(String sessionId, String cwd) {
         Path file = sessionFile(sessionId, cwd);
         if (!Files.exists(file)) {
             return Optional.empty();
         }
+        // 读取 session 文件元数据
         return readMetadataFromPath(cwd, file);
     }
 
+    /**
+     * 查找指定 sessionId 在哪些工作目录下存在对应的 session 文件。
+     *
+     * <p>SessionStore 会按工作目录分目录保存 session 文件，因此同一个 sessionId
+     * 可能需要遍历所有工作目录目录才能确定其归属。</p>
+     *
+     * @param sessionId 要查找的 session 标识
+     * @return 包含该 session 的工作目录列表，按目录字符串升序排列；没有匹配项时返回空列表
+     * @throws UncheckedIOException 遍历 session 存储目录失败时抛出
+     */
     public List<String> findCwdsForSessionId(String sessionId) {
+        // 根据 sessionId 生成其在各工作目录目录下对应的 JSONL 文件名。
         String fileName = sanitize(sessionId) + ".jsonl";
+
+        // session 存储根目录尚不存在时，不可能找到匹配的工作目录。
         if (!Files.isDirectory(root)) {
             return List.of();
         }
+
         try (Stream<Path> paths = Files.list(root)) {
+            // 只保留包含目标 session 文件的工作目录目录，再从事件内容还原原始 cwd。
             return paths
                     .filter(Files::isDirectory)
                     .filter(path -> Files.exists(path.resolve(fileName)))
@@ -154,6 +171,7 @@ public final class SessionStore {
                     .sorted()
                     .toList();
         } catch (IOException exception) {
+            // 转换为运行时异常，交由上层统一处理目录读取失败。
             throw new UncheckedIOException(exception);
         }
     }
@@ -162,19 +180,42 @@ public final class SessionStore {
         return root.resolve(cwdDirectoryKey(cwd)).resolve(sanitize(sessionId) + ".jsonl");
     }
 
+    /**
+     * 从指定的 session 事件文件中读取并汇总会话元数据。
+     *
+     * <p>方法会校验事件是否存在且全部属于指定工作目录，然后提取会话标题、
+     * 事件数量和文件最后修改时间，最终构造 {@link SessionMetadata}。</p>
+     *
+     * @param cwd session 所属的工作目录
+     * @param file session 的 JSONL 事件文件
+     * @return 有效的会话元数据；文件中没有事件或事件不属于指定工作目录时返回空
+     * @throws UncheckedIOException 读取文件属性失败时抛出
+     */
     private Optional<SessionMetadata> readMetadataFromPath(String cwd, Path file) {
         try {
+            // 从 JSONL 文件名中去掉扩展名，得到 sessionId。
             String fileName = file.getFileName().toString();
             String sessionId = fileName.substring(0, fileName.length() - ".jsonl".length());
+
+            // 读取jsonl文件中的全部 session 事件，用于后续校验和元数据汇总。
             List<SessionEvent> events = readAllFromPath(file);
+
+            // 空文件或包含其他工作目录事件的文件不能作为当前 cwd 的有效 session。
             if (events.isEmpty() || events.stream().anyMatch(event -> !event.cwd().equals(cwd))) {
                 return Optional.empty();
             }
+
+            // 文件修改时间用于表示 session 的最近更新时间。
             FileTime modified = Files.getLastModifiedTime(file);
+
+            // 优先使用最近一次重命名标题，没有重命名时回退到第一条用户消息。
             Optional<String> title = latestTitle(events).or(() -> firstUserTitle(events));
+
+            // 汇总 sessionId、标题、事件数和更新时间等概要信息。
             return Optional.of(new SessionMetadata(sessionId, cwd, title, events.size(),
                     modified.toInstant(), file));
         } catch (IOException exception) {
+            // 转换为运行时异常，交由上层统一处理文件读取失败。
             throw new UncheckedIOException(exception);
         }
     }
