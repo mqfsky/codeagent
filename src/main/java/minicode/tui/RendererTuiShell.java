@@ -21,6 +21,7 @@ import minicode.session.model.SessionEvent;
 import minicode.session.model.SessionEventType;
 import minicode.session.plan.PersistenceAction;
 import minicode.session.plan.TurnPersistencePlan;
+import minicode.skills.SkillCatalogFormatter;
 import minicode.tui.input.LineTuiInput;
 import minicode.tui.input.TuiInput;
 import minicode.tui.input.TuiInputEvent;
@@ -260,20 +261,38 @@ public final class RendererTuiShell {
         }
     }
 
+    /**
+     * 处理用户提交的一整行输入。
+     *
+     * <p>权限请求具有最高优先级：存在待处理权限时，本行会被解释为权限选项或拒绝反馈，
+     * 并在得到最终结果后完成对应的 {@link CompletableFuture}，使等待授权的执行线程继续运行。
+     * 没有待处理权限时，输入才会继续按照退出命令、内置命令或普通用户消息处理。</p>
+     *
+     * @param line 用户提交的输入；为 {@code null} 时表示输入结束
+     * @return {@code true} 表示继续运行 TUI，{@code false} 表示结束交互循环
+     */
     private boolean runLine(String line) {
         if (line == null) {
             return false;
         }
+
         PendingPermission permissionToResolve;
         PermissionPromptResult permissionResult;
+        // pendingPermission 会被权限请求线程和 TUI 输入线程共同访问，读取快照时必须加锁。
         synchronized (lock) {
             permissionToResolve = pendingPermission;
         }
+
+        // 存在待授权请求时，当前输入优先作为权限选项或拒绝原因，不再按普通命令处理。
+        // 如果有权限选项 pendingPermission 不为 null
         if (permissionToResolve != null) {
             permissionResult = handlePermissionInput(line);
+            // null 表示输入尚未形成最终决定，例如选项无效，或还需要用户继续填写拒绝原因。
             if (permissionResult != null) {
+                // 完成 future，唤醒 requestPermission(...) 中等待授权结果的执行线程。
                 permissionToResolve.future().complete(permissionResult);
             }
+            // 权限交互期间始终保持 TUI 运行，等待本次或下一次权限输入。
             return true;
         }
 
@@ -297,6 +316,10 @@ public final class RendererTuiShell {
         }
         if ("/init".equals(trimmed)) {
             runInitCommand();
+            return true;
+        }
+        if ("/skill".equals(trimmed)) {
+            runSkillCommand();
             return true;
         }
         synchronized (lock) {
@@ -414,16 +437,32 @@ public final class RendererTuiShell {
         return Math.max(1, screen.size().rows() - 4);
     }
 
+    /**
+     * 将用户输入解析为当前待处理权限请求的选择结果。
+     *
+     * <p>该方法同时处理两个阶段：第一阶段从权限选项中匹配用户输入；如果选中的拒绝项
+     * 要求说明原因，则切换到反馈输入阶段（第二阶段）。只有形成最终的允许或拒绝决定时才返回
+     * {@link PermissionPromptResult}，否则返回 {@code null}，让 TUI 继续等待输入。</p>
+     *
+     * @param line 用户在权限提示中提交的选项或拒绝原因
+     * @return 最终权限结果；没有待处理请求、选项无效或仍需输入反馈时返回 {@code null}
+     */
     private PermissionPromptResult handlePermissionInput(String line) {
+        // 权限状态和界面状态可能被后台执行线程访问，整个解析及状态更新过程需要加锁。
         synchronized (lock) {
+            // 权限请求可能已被其他流程清除，此时没有可处理的目标。
             if (pendingPermission == null) {
                 return null;
             }
             PendingPermission pending = pendingPermission;
+
+            // 第二阶段：已经选择了“拒绝并反馈”时，本次输入就是第二阶段的拒绝原因。
             if (pending.feedbackChoice().isPresent()) {
                 PermissionChoice choice = pending.feedbackChoice().orElseThrow();
                 String feedback = line == null || line.isBlank() ? "Permission denied by user" : line;
                 PermissionPromptResult result = PermissionPromptResult.deny(choice.key(), choice.decision(), feedback);
+
+                // 记录权限审计信息，并恢复为 Agent 正在处理的界面状态。
                 appendTranscriptLocked(TranscriptBlock.permissionAudit(pending.request().requestId(),
                         "denied " + choice.key() + " feedback=" + oneLine(feedback)));
                 pendingPermission = null;
@@ -432,14 +471,21 @@ public final class RendererTuiShell {
                 redrawLocked();
                 return result;
             }
+
+            // 第一阶段：允许用户通过序号、key 或选项文案选择一个权限决定。
             Optional<PermissionChoice> selected = selectChoice(pending.request(), line);
             if (selected.isEmpty()) {
+                // 无法识别时保留当前权限请求，重新展示可选项并继续等待输入。
+                // 重新生成提示
                 appendTranscriptLocked(TranscriptBlock.permissionAudit(pending.request().requestId(),
                         "unknown choice " + line.trim() + "\n" + permissionChoicesText(pending.request())));
+                // 重新渲染
                 redrawLocked();
                 return null;
             }
             PermissionChoice choice = selected.orElseThrow();
+
+            // 需要拒绝原因的选项暂不产生最终结果，只把 TUI 切换到反馈输入阶段。
             if (choice.requiresFeedback()) {
                 pendingPermission = new PendingPermission(pending.request(), pending.future(), Optional.of(choice));
                 state = state.withStatus(StatusState.of("Permission feedback..."))
@@ -447,9 +493,13 @@ public final class RendererTuiShell {
                 redrawLocked();
                 return null;
             }
+
+            // 普通允许或拒绝选项可以立即转换成最终权限结果。
             PermissionPromptResult result = isAllow(choice.decision())
                     ? PermissionPromptResult.allow(choice.key(), choice.decision())
                     : PermissionPromptResult.deny(choice.key(), choice.decision(), null);
+
+            // 权限交互结束：写入审计记录、清除待处理请求并恢复忙碌状态。
             appendTranscriptLocked(TranscriptBlock.permissionAudit(pending.request().requestId(),
                     (result.allowed() ? "allowed " : "denied ") + choice.key()));
             pendingPermission = null;
@@ -463,6 +513,7 @@ public final class RendererTuiShell {
     private void startTurn(String line, boolean answerMode) {
         List<ChatMessage> history = services.sessionMessages();
         UserMessage userMessage = new UserMessage(line);
+        // 更新 UI
         synchronized (lock) {
             appendTranscriptLocked(answerMode
                     ? TranscriptBlock.userAnswer(userMessage.content())
@@ -471,13 +522,16 @@ public final class RendererTuiShell {
                     .withStatus(StatusState.thinking());
             redrawLocked();
         }
+        // 持久化用户消息
         services.sessionPersistenceRunner().apply(new TurnPersistencePlan(
                 List.of(new PersistenceAction.AppendMessagesAction(List.of(userMessage)))
         ));
+        // 组装消息
         List<ChatMessage> turnMessages = new ArrayList<>(history);
         turnMessages.add(userMessage);
         Thread thread = new Thread(() -> runTurnInBackground(turnMessages), "minicode-renderer-turn");
         synchronized (lock) {
+            // activeTurn保存当前正在后台执行这一轮 Agent 对话的线程对象。
             activeTurn = thread;
         }
         thread.start();
@@ -486,8 +540,11 @@ public final class RendererTuiShell {
     private void runTurnInBackground(List<ChatMessage> turnMessages) {
         AgentTurnResult result = null;
         try {
+            // 进入 agent loop
             result = services.runTurn(services.turnRequest(List.copyOf(turnMessages), maxSteps));
+            // 持久化 session
             services.sessionPersistenceRunner().apply(result.persistencePlan());
+            // 更新 UI
             synchronized (lock) {
                 if (!realtimeEvents) {
                     state = state.appendTranscript(projectPersistencePlan(result.persistencePlan()));
@@ -497,6 +554,7 @@ public final class RendererTuiShell {
             }
         } finally {
             synchronized (lock) {
+                // 一轮对话结束后更新
                 if (Thread.currentThread() == activeTurn) {
                     activeTurn = null;
                 }
@@ -532,6 +590,14 @@ public final class RendererTuiShell {
 
     private void runInitCommand() {
         String report = services.initializeProject();
+        synchronized (lock) {
+            appendTranscriptLocked(TranscriptBlock.assistant(report));
+            redrawLocked();
+        }
+    }
+
+    private void runSkillCommand() {
+        String report = SkillCatalogFormatter.render(services.skillRegistry().summaries());
         synchronized (lock) {
             appendTranscriptLocked(TranscriptBlock.assistant(report));
             redrawLocked();
@@ -639,13 +705,16 @@ public final class RendererTuiShell {
             return Optional.empty();
         }
         try {
+            // 数字匹配
             int choiceNumber = Integer.parseInt(normalized);
             if (choiceNumber >= 1 && choiceNumber <= request.choices().size()) {
+                // 返回用户的选项
                 return Optional.of(request.choices().get(choiceNumber - 1));
             }
         } catch (NumberFormatException ignored) {
             // Continue with key/label matching.
         }
+        // key 或 label 匹配
         return request.choices().stream()
                 .filter(choice -> normalize(choice.key()).equals(normalized)
                         || normalize(choice.label()).equals(normalized))

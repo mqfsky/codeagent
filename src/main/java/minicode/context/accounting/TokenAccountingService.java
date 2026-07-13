@@ -18,6 +18,7 @@ public final class TokenAccountingService {
             long estimatedTail = estimate(messages.subList(boundary + 1, messages.size()));
 
             UsageBoundary usageBoundary = new UsageBoundary(boundary, messageBoundaryId(messages.get(boundary)));
+            // 有新消息的估算，就在边界的基础上加上
             if (estimatedTail > 0) {
                 return TokenAccountingResult.providerUsageWithEstimate(
                         usage.inputTokens() + estimatedTail,
@@ -28,6 +29,7 @@ public final class TokenAccountingService {
                         usageBoundary
                 );
             }
+            // 没有就直接返回边界提供的使用率
             return TokenAccountingResult.providerUsage(
                     usage.inputTokens(),
                     usage.outputTokens(),
@@ -35,7 +37,7 @@ public final class TokenAccountingService {
                     usageBoundary
             );
         }
-        // 完整消息估计
+        // 没有边界，完整消息估计
         long estimate = estimate(messages);
         return TokenAccountingResult.estimateOnly(estimate, staleUsageReason(messages));
     }
@@ -59,11 +61,24 @@ public final class TokenAccountingService {
         return -1;
     }
 
+    /**
+     * 从消息中提取模型供应商返回的 token 用量。
+     *
+     * <p>只有模型生成的最终回答、过程消息和工具调用消息可能携带 {@link ProviderUsage}；
+     * 用户消息、系统消息和工具结果等其他消息不是模型响应，因此返回空值。</p>
+     *
+     * @param message 需要检查的聊天消息
+     * @return 消息携带的供应商 token 用量；消息类型不支持或供应商未返回 usage 时为空
+     */
     private Optional<ProviderUsage> providerUsage(ChatMessage message) {
         return switch (message) {
+            // 模型最终文本回答中记录的输入、输出和总 token 数。
             case AssistantMessage assistant -> assistant.providerUsage();
+            // 模型过程性回答中携带的 token 用量。
             case AssistantProgressMessage progress -> progress.providerUsage();
+            // 模型生成工具调用时，该次模型响应携带的 token 用量。
             case AssistantToolCallMessage toolCall -> toolCall.providerUsage();
+            // 用户、系统、工具结果等消息没有供应商 usage。
             default -> Optional.empty();
         };
     }

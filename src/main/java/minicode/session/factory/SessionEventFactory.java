@@ -13,7 +13,8 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * 负责将业务对象包装为 sessionEvent
+ * 负责将业务对象包装为各种 sessionEvent
+ * 业务对象：message，meta，compactBoundary
  */
 public final class SessionEventFactory {
     private final String sessionId;

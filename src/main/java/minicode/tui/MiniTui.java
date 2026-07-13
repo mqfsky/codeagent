@@ -9,6 +9,7 @@ import minicode.core.message.ChatMessage;
 import minicode.core.message.UserMessage;
 import minicode.session.plan.PersistenceAction;
 import minicode.session.plan.TurnPersistencePlan;
+import minicode.skills.SkillCatalogFormatter;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -105,6 +106,10 @@ public final class MiniTui {
         }
         if ("/init".equals(trimmed)) {
             output.println(services.initializeProject());
+            return true;
+        }
+        if ("/skill".equals(trimmed)) {
+            output.println(SkillCatalogFormatter.render(services.skillRegistry().summaries()));
             return true;
         }
 

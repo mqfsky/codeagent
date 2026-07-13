@@ -116,6 +116,7 @@ public final class SessionStore {
     }
 
     public List<SessionMetadata> listSessionsByCwd(String cwd) {
+        // 凭借 session 存储目录：在 user 目录下
         Path dir = root.resolve(cwdDirectoryKey(cwd));
         if (!Files.isDirectory(dir)) {
             return List.of();
@@ -125,7 +126,7 @@ public final class SessionStore {
                     .filter(path -> path.getFileName().toString().endsWith(".jsonl"))
                     .map(path -> readMetadataFromPath(cwd, path))
                     .flatMap(Optional::stream)
-                    .sorted(Comparator.comparing(SessionMetadata::updatedAt).reversed())
+                    .sorted(Comparator.comparing(SessionMetadata::updatedAt).reversed()) // 按更新时间倒序排列, 日期最近的放最前面
                     .toList();
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
@@ -177,6 +178,7 @@ public final class SessionStore {
     }
 
     private Path sessionFile(String sessionId, String cwd) {
+        // 将工作目录进行 BASE64编码
         return root.resolve(cwdDirectoryKey(cwd)).resolve(sanitize(sessionId) + ".jsonl");
     }
 
@@ -208,7 +210,7 @@ public final class SessionStore {
             // 文件修改时间用于表示 session 的最近更新时间。
             FileTime modified = Files.getLastModifiedTime(file);
 
-            // 优先使用最近一次重命名标题，没有重命名时回退到第一条用户消息。
+            // 优先使用最近一次重命名标题，没有重命名事件时回退到第一条用户消息作为标题
             Optional<String> title = latestTitle(events).or(() -> firstUserTitle(events));
 
             // 汇总 sessionId、标题、事件数和更新时间等概要信息。
@@ -260,6 +262,7 @@ public final class SessionStore {
     private static Optional<String> latestTitle(List<SessionEvent> events) {
         for (int index = events.size() - 1; index >= 0; index--) {
             Optional<MetaSessionEventDraft> meta = events.get(index).meta();
+            // 读取 RenameDraft 事件，作为标题
             if (meta.isPresent() && meta.orElseThrow() instanceof RenameDraft renameDraft) {
                 return Optional.of(renameDraft.title());
             }

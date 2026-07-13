@@ -197,15 +197,16 @@ public class ContextManager {
             return actualMessages;
         }
         List<Integer> compactableIndexes = new ArrayList<>();
+        // 筛选需要压缩的消息
         for (int index = 0; index < actualMessages.size(); index++) {
             ChatMessage message = actualMessages.get(index);
-            // 如果是工具调用结果信息
+            // 必须是工具执行结果
             if (message instanceof ToolResultMessage toolResult
-                    // 针对目标工具进行压缩
+                    // 必须是允许清理的工具
                     && MICROCOMPACTABLE_TOOLS.contains(toolResult.toolName())
-                    // 没被压缩过
+                    // 不能是已经持久化的输出，当调用工具得到的消息太大，会进行持久化，并留下这条标记
                     && !toolResult.content().startsWith("<persisted-output ")
-                    // 已经进行过 microcompact 的
+                    // 不能是已经被 microcompact 清理过的结果
                     && !MICROCOMPACT_MARKER.equals(toolResult.content())) {
                 // 加入到待压缩列表
                 compactableIndexes.add(index);
@@ -227,11 +228,12 @@ public class ContextManager {
             compacted.set(messageIndex, new ToolResultMessage(
                     original.toolUseId(),
                     original.toolName(),
-                    MICROCOMPACT_MARKER,
+                    MICROCOMPACT_MARKER, // 可能存在损失记忆的问题
                     original.error()
             ));
             changed = true;
         }
+        // 更新消息 usage
         return changed ? List.copyOf(markProviderUsageStale(compacted)) : actualMessages;
     }
 

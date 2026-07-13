@@ -383,7 +383,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                 actualRequest.modelName(),
                 actualRequest.cancellationToken()
         );
-        // 开启一轮 turn 的临时权限作用域。
+        // 开启一轮 turn 的临时权限作用域，内部维护一个 map，key 为 turnid，value 为 set（保存授权集合）
         permissionService.beginTurn(actualRequest.turnId());
         try {
             return agentLoop.runTurn(actualRequest);
@@ -417,7 +417,7 @@ public record ApplicationServices(ToolRegistry toolRegistry,
 
     public ManualCompactResult manualCompact() {
         ManualCompactResult result = compactService.compact(new CompactRequest(
-                withFreshSystemPrompt(sessionMessages()),
+                withFreshSystemPrompt(sessionMessages()), // 加载从上次压缩后的消息+系统提示词
                 modelAdapter,
                 CompactTrigger.MANUAL
         ));

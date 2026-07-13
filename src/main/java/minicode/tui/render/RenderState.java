@@ -34,9 +34,23 @@ public record RenderState(List<TranscriptBlock> transcript, StatusState status, 
         return new RenderState(transcript, status, input, scrollOffset, contextBadge);
     }
 
+    /**
+     * 将一个内容块合并到转写区域，并返回更新后的渲染状态。
+     *
+     * <p>{@code RenderState} 是不可变 record，因此本方法不会修改当前实例。工具块会按
+     * {@code toolUseId} 更新同一次工具调用的展示内容，权限块会按块 id 更新同一次权限请求，
+     * 其他内容块则仅在 id 尚不存在时追加，从而避免界面出现重复记录。</p>
+     *
+     * @param block 需要合并到转写区域的内容块，不能为 {@code null}
+     * @return 包含合并后转写列表的新 {@link RenderState}
+     * @throws NullPointerException 当 {@code block} 为 {@code null} 时抛出
+     */
     public RenderState appendTranscript(TranscriptBlock block) {
+        // 复制当前不可变列表，后续所有替换和追加都在新列表上完成。
         ArrayList<TranscriptBlock> next = new ArrayList<>(transcript);
         TranscriptBlock actualBlock = Objects.requireNonNull(block, "block");
+
+        // 工具开始和工具结果共享 toolUseId：结果到达后更新原位置，避免显示成两次工具调用。
         if (actualBlock.toolUseId().isPresent()) {
             String toolUseId = actualBlock.toolUseId().orElseThrow();
             for (int index = 0; index < next.size(); index++) {
@@ -44,11 +58,14 @@ public record RenderState(List<TranscriptBlock> transcript, StatusState status, 
                 if (existing.toolUseId().filter(toolUseId::equals).isPresent()
                         && existing.kind() == TranscriptBlock.Kind.TOOL
                         && actualBlock.kind() == TranscriptBlock.Kind.TOOL) {
+                    // 更新工具状态和输出时，尽量保留开始阶段已经展示的工具摘要。
                     next.set(index, preserveToolSummary(existing, actualBlock));
                     return withTranscript(next);
                 }
             }
         }
+
+        // 同一权限请求会经历等待、允许或拒绝等状态，使用相同 id 替换原审计块。
         for (int index = 0; index < next.size(); index++) {
             TranscriptBlock existing = next.get(index);
             if (existing.id().equals(actualBlock.id())
@@ -58,9 +75,12 @@ public record RenderState(List<TranscriptBlock> transcript, StatusState status, 
                 return withTranscript(next);
             }
         }
+
+        // 普通内容块只追加一次；相同 id 已存在时直接保持当前列表，防止重复渲染。
         if (next.stream().noneMatch(existing -> existing.id().equals(actualBlock.id()))) {
             next.add(actualBlock);
         }
+        // withTranscript(...) 会创建新的 RenderState，并保留状态栏、输入框、滚动位置等其他字段。
         return withTranscript(next);
     }
 

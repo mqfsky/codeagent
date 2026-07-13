@@ -55,19 +55,31 @@ public final class MiniCodeApp {
 
     /**
      * Java 进程入口，接收启动参数并把控制权交给 {@link #run(String[], Path, Path, InputStream, OutputStream, OutputStream, Map)}。
+     * --cwd：指定工作目录。
+     * --max-steps：设置单轮最大步骤数。
+     * --version：显示版本。
+     * --help：显示帮助。
+     * --fork 3b983006-b39c-4b26-b395-bf38dac3499e：基于已有 Session 创建一个分支
+     * --resume 3b983006-b39c-4b26-b395-bf38dac3499e：继续 session
+     * session list：列出会话。
+     * session rename：重命名会话。
+     * Session ID：恢复指定会话。
      *
      * @param args 启动命令传入的参数，例如 {@code --cwd}、{@code --resume}、{@code --max-steps}
      */
     public static void main(String[] args) {
         // 将真实进程环境包装成可测试的 run(...) 入参。
         int exitCode = run(
-                args,
+                args, // 启动命令传入的参数，例如 --cwd、--resume、--max-steps
+                // 用户的 home 目录 + .codeagent : /Users/mqf/.codeagent
                 Path.of(System.getProperty("user.home"), ".codeagent"),
+                // java 程序启动时所在的工作目录，比如：/Users/mqf/project/codeagent
                 Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize(),
+                // 终端输入，输出，错误
                 System.in,
                 System.out,
                 System.err,
-                System.getenv()
+                System.getenv() // 读取环境变量
         );
         // 非 0 退出码代表启动或运行失败，需要显式结束进程。
         if (exitCode != 0) {
@@ -245,6 +257,10 @@ public final class MiniCodeApp {
      * 创建输入读取器和 JLine 终端，然后根据终端能力选择普通 line mode
      * 或 Renderer TUI。方法名里的 unchecked 表示异常由外层统一捕获。</p>
      *
+     * <p>在启动 UI 之前，本方法还会调用 {@link ServicesFactory#create(Path, Path, String, AgentEventSink,
+     * PermissionPromptHandler)}，把数据目录、工作目录、当前会话、事件出口和权限交互器
+     * 装配成一次运行所需的 {@link ApplicationServices}。</p>
+     *
      * @param args 启动参数
      * @param home CodeAgent 的数据目录
      * @param cwd 默认工作目录
@@ -274,6 +290,7 @@ public final class MiniCodeApp {
             return;
         }
 
+        // 捕获 -- 的 session 命令
         // 默认新建 UUID session；如果位置参数提供 sessionId，则复用该 id
         // codeagent abc-123
         String sessionId = appArgs.sessionId().orElseGet(() -> UUID.randomUUID().toString());
@@ -308,8 +325,10 @@ public final class MiniCodeApp {
                 actualHome,
                 actualCwd,
                 sessionId,
+                // 普通 line mode 使用 MiniTuiEventSink 输出事件；Renderer 模式由 bridge 接收并渲染事件。
                 rendererBridge == null ? new MiniTuiEventSink(output, event -> {
                 }) : rendererBridge,
+                // 权限请求也随 UI 模式切换：普通控制台读取输入，Renderer 模式显示交互式权限提示。
                 permissionPromptHandler
         );
 
@@ -412,7 +431,7 @@ public final class MiniCodeApp {
         String subcommand = command.size() > 1 ? command.get(1) : "";
         switch (subcommand) {
             case "list" -> {
-                // 按 cwd 列出 session；CodeAgent 的 session 是 workspace 隔离的。
+                // 去 home 目录读当前工作区的 session 文件，以元数据返回
                 List<SessionMetadata> sessions = sessionService.list(cwd);
                 if (sessions.isEmpty()) {
                     out.println("No sessions for cwd: " + cwd);

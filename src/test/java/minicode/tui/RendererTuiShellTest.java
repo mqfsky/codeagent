@@ -192,6 +192,45 @@ class RendererTuiShellTest {
     }
 
     @Test
+    void rendererSlashSkillListsDiscoveredSkillsWithoutCallingModelOrEnteringSession() throws Exception {
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Path skillDir = workspace.resolve(".codeagent/skills/review");
+        Files.createDirectories(skillDir);
+        Files.writeString(skillDir.resolve("SKILL.md"), "# Review\n\nReview code carefully.\n");
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(120, 14));
+        RendererTuiBridge bridge = new RendererTuiBridge();
+        int[] modelCalls = {0};
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                messages -> {
+                    modelCalls[0]++;
+                    return new AssistantStep("unexpected", AssistantKind.FINAL);
+                },
+                bridge,
+                bridge
+        );
+        RendererTuiShell shell = new RendererTuiShell(
+                services,
+                new BufferedLineInput(new BufferedReader(new StringReader("/skill\n"))),
+                screen,
+                MiniTui.DEFAULT_MAX_STEPS,
+                bridge
+        );
+
+        shell.runOnce();
+
+        String latest = screen.latestText();
+        assertTrue(latest.contains("Available skills (1):"), latest);
+        assertTrue(latest.contains("review: Review code carefully."), latest);
+        assertFalse(latest.contains("❯ You › /skill"), latest);
+        assertEquals(0, modelCalls[0]);
+        assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
+    }
+
+    @Test
     void startupProjectsExistingSessionHistoryIntoTranscript() {
         Path home = tempDir.resolve("home");
         Path workspace = tempDir.resolve("workspace").toAbsolutePath().normalize();

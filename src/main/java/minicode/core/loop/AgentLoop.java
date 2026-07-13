@@ -145,12 +145,15 @@ public final class AgentLoop {
             // 一个 turn 里可以有多个 step：每个 step 最多进行一次模型请求，并可能触发一组工具调用。
             for (int stepIndex = 0; stepIndex < request.maxSteps(); stepIndex++) {
                 // 1.模型请求前先处理上下文压力：统计 -> microcompact -> 再统计 -> 必要时 autoCompact。
-                // 统计当前 message 占了多少 token，算上下文窗口占用率和警告等级
+                // 上下文状态，统计当前 message 占了多少 token，算上下文窗口占用率和警告等级
                 ContextStats preCompactStats = contextStatsCalculator.calculate(List.copyOf(messages));
+
                 // 压缩，轻量清理旧工具结果
                 messages = new ArrayList<>(contextManager.microcompact(List.copyOf(messages), preCompactStats));
+
                 // 再统计
                 ContextStats stats = contextStatsCalculator.calculate(List.copyOf(messages));
+
                 // 真正请求模型前，再尝试自动压缩
                 AutoCompactResult autoCompactResult = runAutoCompactPreflight(request.turnId(), messages, actions, stats);
                 if (autoCompactResult.status() == CompactStatus.COMPACTED) {
@@ -424,7 +427,9 @@ public final class AgentLoop {
 
     private void appendAutoCompactPersistenceActions(List<PersistenceAction> actions, AutoCompactResult result) {
         minicode.context.compact.CompressionBoundaryResult boundary = result.boundary().orElseThrow();
+
         actions.add(new PersistenceAction.AppendCompactBoundaryAction(boundary.summaryMessage(), boundary.metadata()));
+
         List<ChatMessage> retainedMessages = retainedMessagesAfterCompactBoundary(result.messages(), boundary.summaryMessage());
         if (!retainedMessages.isEmpty()) {
             actions.add(new PersistenceAction.AppendMessagesAction(retainedMessages));

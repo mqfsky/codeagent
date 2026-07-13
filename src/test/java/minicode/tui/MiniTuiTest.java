@@ -260,6 +260,51 @@ class MiniTuiTest {
     }
 
     @Test
+    void slashSkillListsDiscoveredSkillsWithoutCallingModelOrPersistingCommand() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Path home = Files.createDirectories(tempDir.resolve("home"));
+        Path workspace = Files.createDirectories(tempDir.resolve("workspace"));
+        Path skillDir = workspace.resolve(".codeagent/skills/review");
+        Files.createDirectories(skillDir);
+        Files.writeString(skillDir.resolve("SKILL.md"), "# Review\n\nReview code carefully.\n");
+        RecordingModelAdapter model = new RecordingModelAdapter();
+        ApplicationServices services = ApplicationServices.create(
+                home,
+                workspace,
+                "session-1",
+                model,
+                new MiniTuiEventSink(output, event -> {
+                }),
+                PermissionPromptHandler.unavailable()
+        );
+        MiniTui tui = new MiniTui(services, input("/skill\n"), output);
+
+        tui.runOnce();
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("Available skills (1):"), text);
+        assertTrue(text.contains("- review: Review code carefully."), text);
+        assertFalse(text.contains("user: /skill"), text);
+        assertTrue(model.calls.isEmpty());
+        assertTrue(services.sessionStore().readAll("session-1", workspace.toString()).isEmpty());
+    }
+
+    @Test
+    void slashSkillReportsWhenNoSkillsAreDiscovered() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ApplicationServices services = services(new MockModelAdapter("unused"), output, event -> {
+        });
+        MiniTui tui = new MiniTui(services, input("/skill\n"), output);
+
+        tui.runOnce();
+
+        String text = output.toString(StandardCharsets.UTF_8);
+        assertTrue(text.contains("Available skills (0):"), text);
+        assertTrue(text.contains("- none discovered"), text);
+        assertFalse(text.contains("user: /skill"), text);
+    }
+
+    @Test
     void changedMemoryFileIsVisibleToTheModelOnTheNextTurn() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         Path home = Files.createDirectories(tempDir.resolve("home"));

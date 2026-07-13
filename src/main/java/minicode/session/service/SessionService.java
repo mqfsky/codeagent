@@ -61,7 +61,11 @@ public final class SessionService {
 
     public void rename(String cwd, String sessionId, String title) {
         String actualTitle = requireTitle(title);
+        // 要求 home 下的工作目录内存在 session
         requireExistingInCwd(cwd, sessionId);
+
+        // 将持久化计划保存，一个持久化计划内有多个 action
+        // 创建一个 rename action 并保存
         runnerFor(cwd, sessionId).apply(new TurnPersistencePlan(List.of(
                 new PersistenceAction.AppendSessionEventAction(new RenameDraft(actualTitle))
         )));

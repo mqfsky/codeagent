@@ -148,14 +148,19 @@ public final class CompactService {
             // boundary 越小，表示保留区越往前扩展；这里把当前消息纳入保留区。
             boundary = index;
         }
-        // 即使最近消息 token 很多，也至少保留最近 MIN_KEEP_MESSAGES 条，给模型留足局部上下文。
+
+        // 即使最近消息 token 很多，导致压缩边界很大，也至少保留最近 MIN_KEEP_MESSAGES 条，给模型留足局部上下文。
         int minBoundary = Math.max(1, messages.size() - MIN_KEEP_MESSAGES);
+        // 从最近 MIN_KEEP_MESSAGES 和 MAX_KEEP_TOKENS得到的边界中取小的
+        // ****越小，保留的消息越多
         boundary = Math.min(boundary, minBoundary);
 
-        // 如果 token 规则导致几乎没有旧消息可压缩，就退回“保留最近 N 条”的边界，保证压缩有收益。
+        // 如果 boundary 太早，说明没有消息可以压缩，并且消息数量大于了最少保留消息数量
+        // 就退回“保留最近 MIN_KEEP_MESSAGES 条”的边界，保证压缩有收益。
         if (boundary <= 1 && messages.size() > MIN_KEEP_MESSAGES + 1) {
             boundary = Math.max(1, messages.size() - MIN_KEEP_MESSAGES);
         }
+
         // 工具调用和工具结果必须作为完整轮次保留或压缩，不能把边界切在它们中间。
         return alignBoundaryToToolRound(messages, boundary);
     }

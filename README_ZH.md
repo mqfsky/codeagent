@@ -1,161 +1,407 @@
 # CodeAgent
 
-<p align="center">
-  <img src="./docs/logo.svg" alt="CodeAgent Logo" width="180" />
-</p>
+CodeAgent 是一个使用 Java 21 编写的、本地优先的终端 Coding Agent。
 
-<h2 align="center">CodeAgent</h2>
+它围绕一条完整的 `模型 -> 工具 -> 模型` 执行链工作：理解用户任务，读取和搜索代码，调用本地工具完成修改或验证，再把工具结果交还给模型继续判断。同时，CodeAgent 提供权限确认、可恢复会话、上下文压缩、项目记忆、Skills 和 MCP 扩展能力。
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Java-21-D97757?style=for-the-badge" alt="Java 21" />
-  <img src="https://img.shields.io/badge/CodeAgent-Java%20Edition-B85C3F?style=for-the-badge" alt="CodeAgent Edition" />
-  <img src="https://img.shields.io/badge/terminal--first-agent-F0EBE1?style=for-the-badge&labelColor=8B8B8B" alt="terminal-first agent" />
-</p>
+> 当前项目主要用于学习、实验和验证 Coding Agent 的核心运行机制，尚未按生产级产品标准完善。请在版本控制环境中使用，并在提交前检查 Agent 产生的修改。
 
----
+## 主要能力
 
-<p align="center">
-  一个轻量级、本地优先、terminal-first 的 coding agent。CodeAgent。
-</p>
+- 支持 Anthropic-compatible 和 OpenAI-compatible 模型服务。
+- 提供文件读取、目录遍历、文本搜索、文件写入、精确编辑、批量补丁和命令执行工具。
+- 在路径访问、命令执行、文件修改和 MCP 工具调用前进行权限检查。
+- 使用 append-only JSONL 保存会话，支持列出、重命名、恢复和分叉会话。
+- 支持手动 `/compact` 和自动上下文压缩，避免长对话无限膨胀。
+- 支持 `CODEAGENT.md`、`AGENTS.md` 和 `.codeagent/rules/*.md` 分层项目记忆。
+- 支持从项目级、用户级和兼容目录发现 `SKILL.md`，按需加载完整 Skill。
+- 支持通过 stdio 连接 MCP Server，并把远端能力注册为 Agent 工具。
+- 提供全屏 Renderer TUI；终端能力不足时自动回退到普通行模式。
 
-[English](./README.md) | [功能对齐概览](./FEATURE_ALIGNMENT_ZH.md) | [可优化点](./IMPROVEMENTS_ZH.md)
+## 工作流程
 
-CodeAgent 面向本地开发工作流：读文件、搜代码、执行命令、审阅修改、保存可恢复会话，并在长上下文中通过上下文压缩保持可用。目前只支持作为一个coding agent的最小功能，很多地方都不太完善，但是能跑:)。
+```text
+用户输入
+  -> MiniTui / RendererTuiShell
+  -> ApplicationServices
+  -> AgentLoop
+       -> ModelAdapter 生成回复或工具调用
+       -> ToolRegistry 校验并执行工具
+       -> PermissionService 处理敏感操作授权
+       -> ContextManager 控制工具结果和上下文体积
+  -> SessionPersistenceRunner
+  -> SessionStore 追加写入 JSONL
+```
 
-## 特性
+普通自然语言任务由模型理解；`/compact`、`/memory`、`/init`、`/skill` 等本地命令由 TUI 直接识别，不会进入模型调用链。
 
-- Anthropic-compatible 和 OpenAI-compatible provider 路径
-- terminal-first coding agent 工作流
-- 内置工具：文件读取、搜索、编辑、写入、命令执行、`ask_user`、`load_skill`
-- 敏感动作执行前进行权限审查
-- append-only JSONL session，支持 `list`、`rename`、`resume`、`fork`
-- manual `/compact` 与 full autoCompact
-- Windows launcher 与可运行 fat jar
-- 本分支完全由Java编写，`default-ts-ui`分支有更加美观的TypeScript版本的TUI。
-
-## 构建
-
-需要：
+## 环境要求
 
 - JDK 21
 - Maven 3.9+
-- PowerShell
 
-如果 `java` 和 `mvn` 已经在 `PATH` 中，可以直接使用：
+检查本地环境：
 
-```powershell
-cd <CodeAgent 源码目录>
-
+```bash
 java -version
 mvn -version
+```
 
+## 构建
+
+在 CodeAgent 源码目录执行：
+
+```bash
 mvn test
 mvn package
 ```
 
-产物：
+主要构建产物：
 
 ```text
-target\codeagent.jar
-target\dist\codeagent\
+target/codeagent.jar
+target/dist/codeagent/lib/codeagent.jar
 ```
 
-其中：
+`target/codeagent.jar` 是包含运行依赖的 fat jar，可以直接启动：
 
-- `target\codeagent.jar` 是可直接运行的 fat jar。
-- `target\dist\codeagent\` 是发布目录，里面包含 `bin` 和 `lib`。
-
-构建完成后可以先检查版本和帮助：
-
-```powershell
-java -jar target\codeagent.jar --version
-java -jar target\codeagent.jar --help
+```bash
+java -jar target/codeagent.jar --version
+java -jar target/codeagent.jar --help
 ```
 
-也可以直接测试发布目录里的 Windows launcher：
+## 快速开始
 
-```powershell
-target\dist\codeagent\bin\codeagent.cmd --version
-target\dist\codeagent\bin\codeagent.cmd --help
+### 1. 配置模型
+
+推荐把个人模型配置写入：
+
+```text
+~/.codeagent/settings.json
 ```
 
-如果 JDK 21 没有加入 `PATH`，可以临时指定：
+OpenAI-compatible 示例：
 
-```powershell
-cd <CodeAgent 源码目录>
+```json
+{
+  "provider": "openai-compatible",
+  "model": "your-model",
+  "baseUrl": "https://your-provider.example/v1",
+  "apiKey": "your-api-key"
+}
+```
 
-$env:JAVA_HOME="<你的 JDK 21 安装目录>"
-$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
+Anthropic-compatible 示例：
 
+```json
+{
+  "provider": "anthropic-compatible",
+  "model": "your-model",
+  "baseUrl": "https://your-provider.example",
+  "authToken": "your-auth-token"
+}
+```
+
+支持的 `provider` 值：
+
+| 配置值 | 说明 |
+| --- | --- |
+| `anthropic`、`anthropic-compatible` | 使用 Anthropic Messages API 兼容协议 |
+| `openai`、`openai-compatible` | 使用 OpenAI Chat Completions 兼容协议 |
+| `mock` | 本地测试模式，不请求真实模型服务 |
+
+也可以使用环境变量：
+
+```bash
+export CODEAGENT_PROVIDER="openai-compatible"
+export CODEAGENT_MODEL="your-model"
+export ANTHROPIC_BASE_URL="https://your-provider.example/v1"
+export ANTHROPIC_API_KEY="your-api-key"
+```
+
+当前支持的主要配置项包括：
+
+- `provider`：模型服务类型。
+- `model`：模型名称。
+- `baseUrl`：模型服务地址。
+- `apiKey` / `authToken`：鉴权信息。
+- `maxOutputTokens`：单次模型输出上限。
+- `contextWindow`：模型上下文窗口大小。
+- `maxSteps`：单轮 Agent 最大执行步数。
+- `providerTimeoutSeconds`：模型请求超时时间，默认 300 秒。
+- `mcpServers`：MCP Server 配置。
+
+配置加载优先级为：
+
+```text
+环境变量
+  > 当前项目 .codeagent/settings.json
+  > 用户目录 ~/.codeagent/settings.json
+  > 内置默认值
+```
+
+建议把 API Key 放在用户级配置或环境变量中，不要把真实密钥提交到 Git。
+
+### 2. 在目标项目中启动
+
+进入希望 Agent 操作的项目目录，然后使用 CodeAgent 的绝对路径启动：
+
+```bash
+cd /path/to/your/project
+java -jar /path/to/codeagent/target/codeagent.jar
+```
+
+也可以显式指定 workspace：
+
+```bash
+java -jar /path/to/codeagent/target/codeagent.jar --cwd /path/to/your/project
+```
+
+启动后可以直接输入自然语言任务，例如：
+
+```text
+解释一下这个项目的启动流程
+修复当前失败的单元测试
+给这个接口增加参数校验，并补充测试
+```
+
+## 命令行参数
+
+下表使用 `codeagent` 作为命令名简写。如果本地没有配置 launcher，请将它替换为 `java -jar /path/to/codeagent/target/codeagent.jar`。
+
+| 命令 | 作用 |
+| --- | --- |
+| `codeagent` | 在当前目录创建新会话 |
+| `codeagent --cwd <path>` | 指定 workspace |
+| `codeagent --resume <id>` | 恢复当前 workspace 下的会话 |
+| `codeagent --fork <id>` | 基于已有会话历史创建新会话 |
+| `codeagent session list` | 列出当前 workspace 的会话 |
+| `codeagent session rename <id> <title>` | 重命名会话 |
+| `codeagent --max-steps <n>` | 设置单轮最大步骤数，范围为 1 到 100 |
+| `codeagent --version` | 显示版本 |
+| `codeagent --help` | 显示帮助 |
+
+例如：
+
+```bash
+java -jar target/codeagent.jar session list
+java -jar target/codeagent.jar --resume <session-id>
+```
+
+## 对话内命令
+
+以下命令由 TUI 本地处理，不会作为普通用户消息发送给模型：
+
+| 命令 | 作用 |
+| --- | --- |
+| `/init` | 检测项目结构，生成 `CODEAGENT.md` 和 `.codeagent/rules/*.md` |
+| `/memory` | 查看当前会注入系统提示词的项目记忆文件 |
+| `/skill` | 列出本次启动时发现的 Skills |
+| `/compact` | 手动压缩当前会话上下文 |
+| `exit`、`quit` | 退出 CodeAgent |
+
+## 会话与恢复
+
+CodeAgent 把会话保存为 append-only JSONL。用户消息、模型回复、工具调用、工具结果、压缩边界和会话元数据都会作为事件追加保存，而不是反复覆盖整个文件。
+
+会话按 workspace 的绝对路径隔离，默认存放在：
+
+```text
+~/.codeagent/sessions/
+```
+
+因此，恢复会话时需要回到原来的项目目录，或者传入相同的 `--cwd`：
+
+```bash
+java -jar target/codeagent.jar --cwd /path/to/project --resume <session-id>
+```
+
+`--fork` 会读取源会话最近一次压缩边界之后的可恢复历史，为新会话写入 fork 元数据，并生成新的 session ID。
+
+## 项目记忆
+
+项目记忆是写在 Markdown 文件中的长期项目说明。CodeAgent 会在每一轮模型请求前重新加载这些文件，并把它们加入系统提示词；它不会因为用户说了“记住这件事”就自动修改记忆文件。
+
+在项目中输入：
+
+```text
+/init
+```
+
+CodeAgent 会检测 Java、Maven 和 Gradle 项目结构，并在文件不存在时生成其中适用的文件：
+
+```text
+CODEAGENT.md
+.codeagent/
+└── rules/
+    ├── project.md
+    ├── java.md      # 检测到 Java 时生成
+    ├── maven.md     # 检测到 Maven 时生成
+    └── gradle.md    # 检测到 Gradle 时生成
+```
+
+已经存在的文件不会被覆盖。生成后应根据项目实际情况调整其中的构建命令、代码规范和验证要求。
+
+CodeAgent 还兼容 `AGENTS.md`、目录级本地规则以及 `.mini-code/rules/*.md`。记忆文件支持通过单独一行 `@relative/path.md` 引用同一安全边界内的其他 Markdown 文件。
+
+## Skills
+
+一个 Skill 是一个包含工作流说明的 `SKILL.md`。启动时，CodeAgent 只把 Skill 名称和简介加入系统提示词；当任务匹配某个 Skill 时，模型通过 `load_skill` 读取完整内容。
+
+推荐的项目级目录结构：
+
+```text
+.codeagent/
+└── skills/
+    └── code-review/
+        └── SKILL.md
+```
+
+示例 `SKILL.md`：
+
+```markdown
+---
+description: 审查 Java 修改并检查测试、异常处理和资源释放。
+---
+
+# Code Review
+
+1. 先检查修改范围和调用链。
+2. 再检查行为变化是否有测试覆盖。
+3. 最后运行与改动相关的验证命令。
+```
+
+Skill 名称取自目录名，上面的 Skill 名称是 `code-review`。
+
+发现顺序如下，同名 Skill 只保留优先级更高的第一个：
+
+1. `<workspace>/.codeagent/skills/`
+2. `~/.codeagent/skills/`
+3. `<workspace>/.mini-code/skills/`
+4. `~/.mini-code/skills/`
+5. `<workspace>/.claude/skills/`
+6. `~/.claude/skills/`
+
+新增或修改 Skill 后需要重新启动 CodeAgent。进入对话后可以输入 `/skill` 查看本次启动实际发现的列表。
+
+## MCP
+
+CodeAgent 当前支持通过 stdio 启动 MCP Server。可以在用户级或项目级 `settings.json` 中配置：
+
+```json
+{
+  "mcpServers": {
+    "example": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-server.js"],
+      "cwd": ".",
+      "env": {
+        "EXAMPLE_ENV": "value"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+项目级配置会覆盖用户级同名 Server 的字段。启动时，CodeAgent 会完成 MCP 初始化、读取工具列表，并把工具注册为类似 `mcp__example__tool_name` 的名称。单个 Server 启动失败时会记录错误状态，不会阻止其他 Server 继续初始化。
+
+MCP 工具调用同样经过权限检查。
+
+## 权限与安全边界
+
+模型输出被视为不可信输入。涉及路径、命令、编辑和 MCP 的操作会先经过权限服务，用户可以选择：
+
+- 仅允许一次。
+- 在当前 turn 内允许。
+- 始终允许。
+- 仅拒绝一次。
+- 始终拒绝。
+- 拒绝并向 Agent 提供反馈。
+
+“始终允许”和“始终拒绝”的决策会保存到：
+
+```text
+~/.codeagent/permissions.json
+```
+
+命令工具优先使用显式参数数组，并会拒绝没有经过支持的 shell 片段。即便如此，仍建议：
+
+- 在 Git 仓库或可恢复的工作副本中运行 CodeAgent。
+- 执行前认真检查高风险权限请求。
+- 提交前审阅 diff 并运行项目测试。
+- 不在 Prompt、日志或仓库配置中暴露真实密钥。
+
+## 本地数据目录
+
+CodeAgent 默认把运行数据放在 `~/.codeagent/`：
+
+```text
+~/.codeagent/
+├── settings.json       # 用户级模型和 MCP 配置
+├── permissions.json    # 持久化权限决策
+├── sessions/           # 按 workspace 隔离的 JSONL 会话
+├── skills/             # 用户级 Skills
+└── tool-results/       # 被上下文管理器外置的大型工具结果
+```
+
+项目级配置和规则放在目标 workspace 中：
+
+```text
+<workspace>/
+├── CODEAGENT.md
+└── .codeagent/
+    ├── settings.json
+    ├── rules/
+    └── skills/
+```
+
+## 源码结构
+
+核心代码位于 `src/main/java/minicode/`：
+
+| 目录 | 职责 |
+| --- | --- |
+| `app` | 参数解析、配置加载和应用装配 |
+| `tui` | 普通行模式、Renderer TUI 和终端事件展示 |
+| `core` | AgentLoop、消息、步骤、turn 和运行事件 |
+| `model` | Anthropic、OpenAI-compatible 和 Mock 模型适配器 |
+| `tools` | 工具接口、注册表、内置工具和结果处理 |
+| `permissions` | 权限请求、作用域、持久化决策和用户交互 |
+| `session` | JSONL 会话存储、恢复、重命名和 fork |
+| `context` | token 统计、大工具结果管理和上下文压缩 |
+| `memory`、`init` | 分层项目记忆加载和初始化 |
+| `skills` | Skill 发现、摘要注册和按需加载 |
+| `mcp` | stdio MCP Client、工具发现和运行时管理 |
+
+## 开发与验证
+
+运行完整测试：
+
+```bash
 mvn test
+```
+
+构建可运行 jar：
+
+```bash
 mvn package
 ```
 
-## 运行
+改动 Agent 行为时，建议至少同时验证：
 
-把发布目录的 `bin` 加入 `PATH`：
+- 普通文本回复是否能正确结束 turn。
+- 工具调用结果是否能回到下一步模型上下文。
+- 权限允许、拒绝和持久化是否符合预期。
+- session 是否能恢复，compact 边界是否正确。
+- Renderer TUI 与普通行模式是否保持一致。
 
-```powershell
-$env:PATH="<CodeAgent 源码目录>\target\dist\codeagent\bin;$env:PATH"
-```
+## 当前定位
 
-然后在任意项目目录启动(记得配JAVA_HOME)：
+CodeAgent 已经覆盖 Coding Agent 的核心闭环，但仍是一个持续迭代中的个人项目。当前更适合用于：
 
-```powershell
-cd <你的项目目录>
-codeagent
-```
+- 学习 Agent Loop、工具调用和上下文管理。
+- 验证模型适配、权限系统、会话持久化、Skills 与 MCP 设计。
+- 在受控代码仓库中完成小规模开发任务。
 
-默认 workspace 就是当前 shell 目录。也可以显式指定：
-
-```powershell
-codeagent --cwd <你的项目目录>
-```
-
-不想改 `PATH` 时，也可以用完整路径运行：
-
-```powershell
-cd <你的项目目录>
-<CodeAgent 源码目录>\target\dist\codeagent\bin\codeagent.cmd
-```
-
-快速 smoke：
-
-```powershell
-New-Item -ItemType Directory -Force .\manual-test-workspace | Out-Null
-cd .\manual-test-workspace
-<CodeAgent 源码目录>\target\dist\codeagent\bin\codeagent.cmd --version
-<CodeAgent 源码目录>\target\dist\codeagent\bin\codeagent.cmd session list
-```
-
-## Provider
-
-Anthropic-compatible 或 OpenAI-compatible endpoint 示例(mimo是孩子测试的时候用的)：
-
-```powershell
-$env:CODEAGENT_PROVIDER="anthropic-compatible"
-$env:ANTHROPIC_BASE_URL="https://api.xiaomimimo.com/anthropic"
-$env:ANTHROPIC_MODEL="mimo-v2.5-pro"
-$env:ANTHROPIC_AUTH_TOKEN="<token>"
-```
-
-不要提交或打印真实 token。
-
-## 常用命令
-
-```powershell
-codeagent
-codeagent --cwd <path>
-codeagent --resume <id>
-codeagent --fork <id>
-codeagent session list
-codeagent session rename <id> <title>
-codeagent --max-steps <n>
-codeagent --version
-codeagent --help
-```
-
-在任一交互式 TUI 中，可以使用 `/init` 生成 `CODEAGENT.md` 和 `.codeagent/rules/`，
-使用 `/memory` 查看当前注入 Prompt 的记忆文件，使用 `/compact` 压缩会话上下文。
-
-session 按 workspace cwd 隔离。恢复 session 时，请在同一个项目目录运行，或传入相同的 `--cwd`。
+在用于重要或生产环境之前，仍需要补强评测体系、可观测性、故障恢复、跨平台发布和更严格的安全策略。
