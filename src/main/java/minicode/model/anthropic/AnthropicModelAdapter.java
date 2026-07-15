@@ -149,6 +149,11 @@ public final class AnthropicModelAdapter implements ModelAdapter {
         return root;
     }
 
+    /**
+     * 从 message 中提取类别为 system message 的消息并将内容拼成字符串
+     * @param messages
+     * @return
+     */
     private String systemText(List<ChatMessage> messages) {
         return messages.stream()
                 .filter(SystemMessage.class::isInstance)
