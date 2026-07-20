@@ -33,6 +33,7 @@ public final class RendererTuiBridge implements AgentEventSink, PermissionPrompt
                     "Renderer permission handler is not attached"
             );
         }
+        // 这里
         return current.requestPermission(request);
     }
 }

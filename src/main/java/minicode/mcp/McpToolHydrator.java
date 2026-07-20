@@ -27,7 +27,7 @@ public final class McpToolHydrator {
      * 返回包装好的 MCP工具，MCP Client，以及配置 summerize
      *
      * <p>该方法会遍历所有 Server 配置：跳过并记录被禁用的 Server；为启用的 Server
-     * 创建 {@link StdioMcpClient}、完成初始化握手并读取工具列表，再将每个远端工具包装为
+     * 通过 {@link McpClientFactory} 创建匹配传输的客户端、完成初始化握手并读取工具列表，再将每个远端工具包装为
      * {@link McpBackedTool}。当提供 {@code permissionService} 时，包装后的工具会在远端调用前
      * 执行权限检查。</p>
      *
@@ -54,41 +54,47 @@ public final class McpToolHydrator {
         for (Map.Entry<String, McpServerConfig> entry : Objects.requireNonNull(configs, "configs").entrySet()) {
             String serverName = entry.getKey();
             McpServerConfig config = entry.getValue();
-            // mcp 指令，例如：npx -y @modelcontextprotocol/server-filesystem /tmp
-            String command = summarizeCommand(config);
+            // stdio 显示命令，HTTP 只显示去除认证信息和 query 的 endpoint。
+            String endpoint = config.endpointSummary();
             if (!config.enabled()) {
-                summaries.add(new McpServerSummary(serverName, command, McpServerStatus.DISABLED, 0, Optional.empty()));
+                summaries.add(new McpServerSummary(serverName, endpoint, McpServerStatus.DISABLED, 0,
+                        Optional.empty()));
                 continue;
             }
 
-            StdioMcpClient client = new StdioMcpClient(serverName, config, actualBaseCwd);
+            McpClient client = null;
             try {
+                client = McpClientFactory.create(serverName, config, actualBaseCwd);
                 // 与 MCP服务器通信，进行初始化
                 client.start();
                 // 读取 MCP 服务器的工具列表
                 List<McpToolDescriptor> descriptors = client.listTools();
+                // HTTP tools/list 可能因 Session 过期触发一次重新初始化；摘要应采用当前 Session 的结果。
+                McpInitialization initialization = client.start();
                 for (McpToolDescriptor descriptor : descriptors) {
                     tools.add(permissionService == null
                             ? new McpBackedTool(serverName, descriptor, client)
                             : new McpBackedTool(serverName, descriptor, client, permissionService));
                 }
                 clients.add(client);
-                summaries.add(new McpServerSummary(serverName, command, McpServerStatus.CONNECTED,
-                        descriptors.size(), Optional.empty()));
+                summaries.add(new McpServerSummary(serverName, endpoint, McpServerStatus.CONNECTED,
+                        descriptors.size(), Optional.empty(), Optional.empty(),
+                        Optional.of(initialization.instructions()).filter(value -> !value.isBlank())));
             } catch (RuntimeException exception) {
-                client.close();
+                if (client != null) {
+                    try {
+                        client.close();
+                    } catch (RuntimeException ignored) {
+                    }
+                }
                 McpErrorKind kind = exception instanceof McpException mcpException
                         ? mcpException.kind()
-                        : McpErrorKind.TOOL_CALL_FAILED;
-                summaries.add(new McpServerSummary(serverName, command, McpServerStatus.ERROR, 0,
-                        Optional.of(messageOrDefault(exception)), Optional.of(kind)));
+                        : McpErrorKind.UNKNOWN;
+                summaries.add(new McpServerSummary(serverName, endpoint, McpServerStatus.ERROR, 0,
+                        Optional.of(messageOrDefault(exception)), Optional.of(kind), Optional.empty()));
             }
         }
         return new McpRuntime(tools, summaries, clients);
-    }
-
-    private static String summarizeCommand(McpServerConfig config) {
-        return config.endpointSummary();
     }
 
     private static String messageOrDefault(RuntimeException exception) {

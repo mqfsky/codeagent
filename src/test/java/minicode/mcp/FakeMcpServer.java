@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
@@ -23,15 +23,14 @@ public final class FakeMcpServer {
             return;
         }
 
-        InputStream input = System.in;
+        BufferedReader input = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         while (true) {
             JsonNode request = readMessage(input);
             if (request == null) {
                 return;
             }
             if ("invalid-json".equals(mode)) {
-                System.out.write("Content-Length: 9\r\n\r\nnot-json!".getBytes(StandardCharsets.UTF_8));
-                System.out.flush();
+                System.out.println("not-json!");
                 continue;
             }
             if (!request.has("id")) {
@@ -83,44 +82,13 @@ public final class FakeMcpServer {
         }
     }
 
-    private static JsonNode readMessage(InputStream input) throws Exception {
-        ByteArrayOutputStream headers = new ByteArrayOutputStream();
-        int matched = 0;
-        int next;
-        byte[] separator = "\r\n\r\n".getBytes(StandardCharsets.UTF_8);
-        while ((next = input.read()) != -1) {
-            headers.write(next);
-            if (next == separator[matched]) {
-                matched++;
-                if (matched == separator.length) {
-                    break;
-                }
-            } else {
-                matched = next == separator[0] ? 1 : 0;
-            }
-        }
-        if (next == -1) {
-            return null;
-        }
-
-        String headerText = headers.toString(StandardCharsets.UTF_8);
-        int contentLength = 0;
-        for (String line : headerText.split("\r\n")) {
-            if (line.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
-                contentLength = Integer.parseInt(line.substring(line.indexOf(':') + 1).trim());
-            }
-        }
-        byte[] body = input.readNBytes(contentLength);
-        if (body.length < contentLength) {
-            return null;
-        }
-        return MAPPER.readTree(body);
+    private static JsonNode readMessage(BufferedReader input) throws Exception {
+        String line = input.readLine();
+        return line == null ? null : MAPPER.readTree(line);
     }
 
     private static void writeMessage(JsonNode message) throws Exception {
-        byte[] body = MAPPER.writeValueAsBytes(message);
-        System.out.write(("Content-Length: " + body.length + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-        System.out.write(body);
+        System.out.println(MAPPER.writeValueAsString(message));
         System.out.flush();
     }
 }

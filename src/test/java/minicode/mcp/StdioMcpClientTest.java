@@ -14,14 +14,17 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class StdioMcpClientTest {
     @Test
-    void initializesListsToolsAndCallsToolOverContentLengthStdio() {
+    void initializesListsToolsAndCallsToolOverNewlineDelimitedStdio() {
         StdioMcpClient client = new StdioMcpClient("Fake Server", fakeConfig("happy"));
         try {
-            client.start();
+            McpInitialization initialization = client.start();
 
             List<McpToolDescriptor> tools = client.listTools();
             JsonNode result = client.callTool("Echo Tool", JsonNodeFactory.instance.objectNode().put("value", "hello"));
 
+            assertEquals("2024-11-05", initialization.protocolVersion());
+            assertEquals("Use Echo Tool only when echoing user-provided text.", initialization.instructions());
+            assertSame(initialization, client.start());
             assertEquals(2, tools.size());
             assertEquals("Echo Tool", tools.getFirst().name());
             assertEquals("object", tools.getFirst().inputSchema().orElseThrow().get("type").asText());
@@ -58,6 +61,61 @@ class StdioMcpClientTest {
     }
 
     @Test
+    void trailingGarbageAfterJsonDuringInitializeFailsAsProtocolError() {
+        StdioMcpClient client = new StdioMcpClient("Bad Server", fakeConfig("trailing-json"));
+
+        McpException exception = assertThrows(McpException.class, client::start);
+
+        assertEquals(McpErrorKind.PROTOCOL_ERROR, exception.kind());
+        client.close();
+    }
+
+    @Test
+    void mismatchedResponseIdFailsAsProtocolError() {
+        StdioMcpClient client = new StdioMcpClient("Bad Server", fakeConfig("id-mismatch"));
+
+        McpException exception = assertThrows(McpException.class, client::start);
+
+        assertEquals(McpErrorKind.PROTOCOL_ERROR, exception.kind());
+        assertTrue(exception.getMessage().contains("response id"));
+        client.close();
+    }
+
+    @Test
+    void jsonRpcErrorUsesLifecycleFailureKind() {
+        StdioMcpClient client = new StdioMcpClient("Rejecting Server", fakeConfig("initialize-error"));
+
+        McpException exception = assertThrows(McpException.class, client::start);
+
+        assertEquals(McpErrorKind.HANDSHAKE_FAILED, exception.kind());
+        assertTrue(exception.getMessage().contains("initialize rejected"));
+        client.close();
+    }
+
+    @Test
+    void acceptsADeclaredNewerNegotiatedProtocolVersion() {
+        StdioMcpClient client = new StdioMcpClient("New Server", fakeConfig("new-version"));
+        try {
+            McpInitialization initialization = client.start();
+
+            assertEquals("2025-11-25", initialization.protocolVersion());
+        } finally {
+            client.close();
+        }
+    }
+
+    @Test
+    void rejectsAnUnsupportedNegotiatedProtocolVersion() {
+        StdioMcpClient client = new StdioMcpClient("Future Server", fakeConfig("unsupported-version"));
+
+        McpException exception = assertThrows(McpException.class, client::start);
+
+        assertEquals(McpErrorKind.HANDSHAKE_FAILED, exception.kind());
+        assertTrue(exception.getMessage().contains("unsupported protocol version"));
+        client.close();
+    }
+
+    @Test
     void initializeTimeoutFailsAndCloseStopsProcess() {
         StdioMcpClient client = new StdioMcpClient("Slow Server", fakeConfig("hang"));
 
@@ -65,8 +123,11 @@ class StdioMcpClientTest {
 
         assertEquals(McpErrorKind.TIMEOUT, exception.kind());
         assertTrue(client.processHandle().isPresent());
+        assertFalse(client.processHandle().orElseThrow().isAlive());
+        McpException afterTimeout = assertThrows(McpException.class, client::listTools);
+        assertEquals(McpErrorKind.HANDSHAKE_FAILED, afterTimeout.kind());
         client.close();
-        assertTrue(client.processHandle().orElseThrow().isAlive() == false);
+        assertFalse(client.processHandle().orElseThrow().isAlive());
     }
 
     private static McpServerConfig fakeConfig(String mode) {

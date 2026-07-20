@@ -7,10 +7,14 @@ import minicode.tools.api.ToolContext;
 import minicode.tools.metadata.ToolOrigin;
 import minicode.tools.registry.ToolRegistry;
 import minicode.tools.result.ToolResult;
+import minicode.permissions.model.PermissionDecision;
+import minicode.permissions.model.PermissionPromptResult;
+import minicode.permissions.service.PromptingPermissionService;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -50,6 +54,27 @@ class McpBackedToolTest {
         assertEquals("remote ok", result.content());
     }
 
+    @Test
+    void deniedMcpPermissionDoesNotReachTheRemoteClient() {
+        StaticMcpClient client = new StaticMcpClient(result("must not run", false));
+        McpBackedTool tool = new McpBackedTool(
+                "Server A",
+                descriptor(),
+                client,
+                new PromptingPermissionService(request -> PermissionPromptResult.deny(
+                        "deny_once", PermissionDecision.DENY_ONCE, null))
+        );
+
+        ToolResult denied = tool.run(
+                JsonNodeFactory.instance.objectNode().put("value", "hello"),
+                new ToolContext(Path.of("."), "session-1", Optional.of("turn-1"), Optional.of("tool-use-1"))
+        );
+
+        assertTrue(denied.error());
+        assertTrue(denied.content().contains("Permission denied"));
+        assertEquals(0, client.callCount());
+    }
+
     private static McpToolDescriptor descriptor() {
         return new McpToolDescriptor("Echo Tool", "Echoes.", Optional.of(JsonNodeFactory.instance.objectNode().put("type", "object")));
     }
@@ -66,9 +91,14 @@ class McpBackedToolTest {
      *
      * @param result 执行结果；为空表示未完成或未产生结果
      */
-    private record StaticMcpClient(JsonNode result) implements McpClient {
+    private record StaticMcpClient(JsonNode result, AtomicInteger calls) implements McpClient {
+        private StaticMcpClient(JsonNode result) {
+            this(result, new AtomicInteger());
+        }
+
         @Override
-        public void start() {
+        public McpInitialization start() {
+            return new McpInitialization(AbstractMcpClient.PROTOCOL_VERSION_2024_11_05, "");
         }
 
         @Override
@@ -78,7 +108,12 @@ class McpBackedToolTest {
 
         @Override
         public JsonNode callTool(String name, JsonNode arguments) {
+            calls.incrementAndGet();
             return result;
+        }
+
+        private int callCount() {
+            return calls.get();
         }
 
         @Override

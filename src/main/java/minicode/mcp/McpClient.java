@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 
 public interface McpClient extends AutoCloseable {
-    void start();
+    McpInitialization start();
 
     List<McpToolDescriptor> listTools();
 

@@ -31,7 +31,11 @@ public final class McpRuntime implements AutoCloseable {
     @Override
     public void close() {
         for (McpClient client : clients) {
-            client.close();
+            try {
+                client.close();
+            } catch (RuntimeException ignored) {
+                // 单个远端 Server 关闭失败不能阻止其余客户端释放资源。
+            }
         }
     }
 }
