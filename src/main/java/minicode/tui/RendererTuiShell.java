@@ -1,5 +1,6 @@
 package minicode.tui;
 
+import minicode.agent.event.AgentTaskEvent;
 import minicode.app.ApplicationServices;
 import minicode.context.stats.ContextWarningLevel;
 import minicode.core.event.AgentEvent;
@@ -185,6 +186,28 @@ public final class RendererTuiShell {
                 case minicode.core.event.ToolResultsBudgetedEvent ignored -> {
                 }
             }
+            redrawLocked();
+        }
+    }
+
+    /**
+     * 展示子 Agent 的独立生命周期块，不改变主 turn 的输入模式、状态栏或权限弹窗。
+     */
+    void onAgentTaskEvent(AgentTaskEvent event) {
+        Objects.requireNonNull(event, "event");
+        synchronized (lock) {
+            String taskId = event.taskId().orElse("sync");
+            String role = event.agentType().name().toLowerCase(Locale.ROOT).replace('_', '-');
+            String text = switch (event) {
+                case AgentTaskEvent.StateChangedEvent state -> "[" + taskId + "] " + role
+                        + " " + state.status().name().toLowerCase(Locale.ROOT);
+                case AgentTaskEvent.ToolStartedEvent started -> "[" + taskId + "] " + role
+                        + " tool " + started.toolName() + " started";
+                case AgentTaskEvent.ToolFinishedEvent finished -> "[" + taskId + "] " + role
+                        + " tool " + finished.toolName() + " "
+                        + (finished.error() ? "failed" : "completed");
+            };
+            appendTranscriptLocked(TranscriptBlock.agentTask(taskId, text));
             redrawLocked();
         }
     }

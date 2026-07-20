@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import minicode.config.RuntimeConfig;
 import minicode.core.loop.ModelAdapter;
+import minicode.core.loop.ForkableModelAdapter;
 import minicode.core.message.*;
 import minicode.core.step.*;
 import minicode.model.ProviderRequestException;
@@ -24,7 +25,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.*;
 
-public final class OpenAIModelAdapter implements ModelAdapter {
+public final class OpenAIModelAdapter implements ForkableModelAdapter {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final long BASE_RETRY_DELAY_MS = 500L;
     private static final long MAX_RETRY_DELAY_MS = 8_000L;
@@ -71,6 +72,11 @@ public final class OpenAIModelAdapter implements ModelAdapter {
         return parseResponse(responseBody);
     }
 
+    @Override
+    public ModelAdapter fork(ToolRegistry toolRegistry) {
+        return new OpenAIModelAdapter(runtimeConfig, toolRegistry, httpClient, maxRetries, retryDelayStrategy);
+    }
+
     // ===================== 请求体构建 =====================
 
     private JsonNode buildRequestBody(List<ChatMessage> messages) {
@@ -92,6 +98,8 @@ public final class OpenAIModelAdapter implements ModelAdapter {
                 result.add(makeMessage("system", sm.content()));
             } else if (msg instanceof UserMessage um) {
                 result.add(makeMessage("user", um.content()));
+            } else if (msg instanceof AgentNotificationMessage notification) {
+                result.add(makeMessage("user", notification.toModelText()));
             } else if (msg instanceof ContextSummaryMessage csm) {
                 result.add(makeMessage("user", "[Context Summary from earlier conversation]\n" + csm.content()));
             } else if (msg instanceof AssistantThinkingMessage tm) {

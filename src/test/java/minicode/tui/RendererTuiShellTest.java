@@ -1,5 +1,8 @@
 package minicode.tui;
 
+import minicode.agent.event.AgentTaskEvent;
+import minicode.agent.model.AgentTaskStatus;
+import minicode.agent.model.AgentType;
 import minicode.app.ApplicationServices;
 import minicode.core.event.AgentEvent;
 import minicode.core.message.AssistantMessage;
@@ -38,6 +41,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -80,6 +85,110 @@ class RendererTuiShellTest {
         assertFalse(latest.contains("Thinking..."), latest);
         assertFalse(latest.contains("turn_stop: FINAL"), latest);
         assertFalse(latest.contains("status: Thinking..."), latest);
+    }
+
+    @Test
+    void backgroundAgentTaskRendersSeparateBlockWithoutChangingBusyInput() throws Exception {
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(90, 14));
+        RendererTuiBridge bridge = new RendererTuiBridge();
+        CountDownLatch modelStarted = new CountDownLatch(1);
+        CountDownLatch releaseModel = new CountDownLatch(1);
+        ApplicationServices services = ApplicationServices.create(
+                tempDir.resolve("home"),
+                tempDir.resolve("workspace"),
+                "session-1",
+                messages -> {
+                    modelStarted.countDown();
+                    try {
+                        assertTrue(releaseModel.await(2, TimeUnit.SECONDS));
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(exception);
+                    }
+                    return new AssistantStep("done", AssistantKind.FINAL);
+                },
+                bridge,
+                bridge
+        );
+        RendererTuiShell shell = new RendererTuiShell(
+                services,
+                new BufferedLineInput(new BufferedReader(new StringReader("hello\n"))),
+                screen,
+                MiniTui.DEFAULT_MAX_STEPS,
+                bridge
+        );
+
+        shell.runOnce();
+        assertTrue(modelStarted.await(2, TimeUnit.SECONDS));
+        try {
+            bridge.onEvent(new AgentTaskEvent.StateChangedEvent(
+                    "agent-1",
+                    Optional.of("task-1"),
+                    "parent-turn",
+                    AgentType.EXPLORE,
+                    java.time.Instant.EPOCH,
+                    Optional.of(AgentTaskStatus.QUEUED),
+                    AgentTaskStatus.RUNNING
+            ));
+
+            String latest = screen.latestText();
+            assertTrue(latest.contains("◎ Agent task › [task-1] explore running"), latest);
+            assertTrue(latest.contains("● Thinking..."), latest);
+            assertEquals("…", screen.latestFrame().orElseThrow().lines().getLast().stripTrailing());
+        } finally {
+            releaseModel.countDown();
+            shell.awaitIdle(Duration.ofSeconds(2));
+        }
+    }
+
+    @Test
+    void backgroundAgentTaskDoesNotReplacePendingPermissionState() {
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(100, 24));
+        RendererTuiBridge bridge = new RendererTuiBridge();
+        ApplicationServices services = ApplicationServices.create(
+                tempDir.resolve("home"),
+                tempDir.resolve("workspace"),
+                "session-1",
+                new MockModelAdapter("unused"),
+                bridge,
+                bridge
+        );
+        RendererTuiShell shell = new RendererTuiShell(
+                services,
+                new ScriptedTuiInput(List.of(TuiInputEvent.submitLine("allow_once"))),
+                screen,
+                MiniTui.DEFAULT_MAX_STEPS,
+                bridge
+        );
+        PermissionRequest request = new PermissionRequest(
+                "permission-1",
+                PermissionRequestKind.PATH,
+                new PermissionResource.PathResource(Path.of("outside.txt"), PathIntent.READ),
+                "Allow file read",
+                Optional.empty()
+        );
+        java.util.concurrent.CompletableFuture<?> prompt = java.util.concurrent.CompletableFuture.runAsync(
+                () -> shell.requestPermission(request));
+        waitUntil(() -> screen.latestText().contains("allow ›"), Duration.ofSeconds(2));
+
+        bridge.onEvent(new AgentTaskEvent.ToolStartedEvent(
+                "agent-2",
+                Optional.of("task-2"),
+                "parent-turn",
+                AgentType.PLAN,
+                java.time.Instant.EPOCH,
+                "child-tool-1",
+                "read_file"
+        ));
+
+        String pending = screen.latestText();
+        assertTrue(pending.contains("◎ Agent task › [task-2] plan tool read_file started"), pending);
+        assertTrue(pending.contains("! Permission › pending"), pending);
+        assertTrue(pending.contains("● Waiting for approval..."), pending);
+        assertEquals("allow ›", screen.latestFrame().orElseThrow().lines().getLast().stripTrailing());
+
+        shell.runOnce();
+        prompt.join();
     }
 
     @Test

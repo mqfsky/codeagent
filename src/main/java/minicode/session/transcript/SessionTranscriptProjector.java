@@ -33,6 +33,10 @@ public final class SessionTranscriptProjector {
         return switch (message) {
             case UserMessage user -> new TranscriptEntry(
                     TranscriptEntry.Kind.USER, user.content(), Optional.empty(), Optional.empty());
+            case AgentNotificationMessage notification -> new TranscriptEntry(
+                    TranscriptEntry.Kind.NOTIFICATION,
+                    "task " + notification.taskId() + " [" + notification.status() + "]\n" + notification.content(),
+                    Optional.empty(), Optional.empty());
             case AssistantMessage assistant -> new TranscriptEntry(
                     TranscriptEntry.Kind.ASSISTANT, assistant.content(), Optional.empty(), Optional.empty());
             case AssistantProgressMessage progress -> new TranscriptEntry(

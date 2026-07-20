@@ -11,6 +11,7 @@ import minicode.core.message.AssistantMessage;
 import minicode.core.message.AssistantProgressMessage;
 import minicode.core.message.AssistantThinkingMessage;
 import minicode.core.message.AssistantToolCallMessage;
+import minicode.core.message.AgentNotificationMessage;
 import minicode.core.message.ChatMessage;
 import minicode.core.message.ContextSummaryMessage;
 import minicode.core.message.SystemMessage;
@@ -346,6 +347,12 @@ public final class SessionStore {
                 node.put("role", "user");
                 node.put("content", userMessage.content());
             }
+            case AgentNotificationMessage notificationMessage -> {
+                node.put("role", "agent_notification");
+                node.put("taskId", notificationMessage.taskId());
+                node.put("status", notificationMessage.status());
+                node.put("content", notificationMessage.content());
+            }
             case AssistantMessage assistantMessage -> {
                 node.put("role", "assistant");
                 node.put("content", assistantMessage.content());
@@ -396,6 +403,7 @@ public final class SessionStore {
             return switch (event.message().orElseThrow()) {
                 case SystemMessage ignored -> "system";
                 case UserMessage ignored -> "user";
+                case AgentNotificationMessage ignored -> "agent_notification";
                 case AssistantMessage ignored -> "assistant";
                 case AssistantThinkingMessage ignored -> "thinking";
                 case AssistantProgressMessage ignored -> "progress";
@@ -415,7 +423,7 @@ public final class SessionStore {
 
     private static SessionEventType deserializeEventType(String value) {
         return switch (value) {
-            case "system", "user", "assistant", "thinking", "progress", "tool_call", "tool_result",
+            case "system", "user", "agent_notification", "assistant", "thinking", "progress", "tool_call", "tool_result",
                  "summary", "message", "MESSAGE" -> SessionEventType.MESSAGE;
             case "compact_boundary", "COMPACT_BOUNDARY" -> SessionEventType.COMPACT_BOUNDARY;
             case "rename", "RENAME" -> SessionEventType.RENAME;
@@ -428,6 +436,8 @@ public final class SessionStore {
         return switch (node.get("role").asText()) {
             case "system" -> new SystemMessage(node.get("content").asText());
             case "user" -> new UserMessage(node.get("content").asText());
+            case "agent_notification" -> new AgentNotificationMessage(node.get("taskId").asText(),
+                    node.get("status").asText(), node.get("content").asText());
             case "assistant" -> new AssistantMessage(node.get("content").asText(),
                     readProviderUsage(node), readUsageStaleness(node));
             case "assistant_progress" -> new AssistantProgressMessage(node.get("content").asText(),

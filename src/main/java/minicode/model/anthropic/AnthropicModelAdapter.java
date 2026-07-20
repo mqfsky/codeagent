@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import minicode.config.RuntimeConfig;
 import minicode.core.loop.ModelAdapter;
+import minicode.core.loop.ForkableModelAdapter;
 import minicode.core.message.*;
 import minicode.core.step.*;
 import minicode.model.ProviderThinkingBlock;
@@ -19,7 +20,7 @@ import minicode.tools.registry.ToolRegistry;
 
 import java.util.*;
 
-public final class AnthropicModelAdapter implements ModelAdapter {
+public final class AnthropicModelAdapter implements ForkableModelAdapter {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final long BASE_RETRY_DELAY_MS = 500L;
     private static final long MAX_RETRY_DELAY_MS = 8_000L;
@@ -102,6 +103,12 @@ public final class AnthropicModelAdapter implements ModelAdapter {
         return parseStep(data);
     }
 
+    @Override
+    public ModelAdapter fork(ToolRegistry toolRegistry) {
+        return new AnthropicModelAdapter(runtimeConfig, toolRegistry, transport,
+                resolvedMaxOutputTokens, maxRetries, retryDelayStrategy);
+    }
+
     private AnthropicTransport.Response sendWithRetries(JsonNode requestBody) {
         String url = runtimeConfig.baseUrl().replaceAll("/+$", "") + "/v1/messages";
         Map<String, String> actualHeaders = headers();
@@ -171,6 +178,8 @@ public final class AnthropicModelAdapter implements ModelAdapter {
             }
             if (message instanceof UserMessage user) {
                 pushBlock(converted, "user", textBlock(user.content()));
+            } else if (message instanceof AgentNotificationMessage notification) {
+                pushBlock(converted, "user", textBlock(notification.toModelText()));
             } else if (message instanceof ContextSummaryMessage summary) {
                 pushBlock(converted, "user", textBlock("[Context Summary from earlier conversation]\n" + summary.content()));
             } else if (message instanceof AssistantThinkingMessage thinking) {

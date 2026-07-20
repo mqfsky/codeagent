@@ -1,5 +1,7 @@
 package minicode.tui;
 
+import minicode.agent.event.AgentTaskEvent;
+import minicode.agent.event.AgentTaskEventSink;
 import minicode.core.event.AgentEvent;
 import minicode.core.event.AgentEventSink;
 import minicode.core.message.AssistantMessage;
@@ -12,7 +14,7 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
-public final class MiniTuiEventSink implements AgentEventSink {
+public final class MiniTuiEventSink implements AgentEventSink, AgentTaskEventSink {
     private final PrintWriter out;
     private final AgentEventSink delegate;
 
@@ -25,6 +27,24 @@ public final class MiniTuiEventSink implements AgentEventSink {
     public void onEvent(AgentEvent event) {
         render(event);
         delegate.onEvent(event);
+    }
+
+    @Override
+    public void onEvent(AgentTaskEvent event) {
+        Objects.requireNonNull(event, "event");
+        String taskId = event.taskId().orElse("sync");
+        String prefix = "agent_task: taskId=" + taskId
+                + " agentId=" + event.agentId()
+                + " role=" + event.agentType().name().toLowerCase(java.util.Locale.ROOT).replace('_', '-');
+        switch (event) {
+            case AgentTaskEvent.StateChangedEvent state -> out.println(prefix
+                    + " status=" + state.status().name().toLowerCase(java.util.Locale.ROOT));
+            case AgentTaskEvent.ToolStartedEvent started -> out.println(prefix
+                    + " tool=" + started.toolName() + " status=started");
+            case AgentTaskEvent.ToolFinishedEvent finished -> out.println(prefix
+                    + " tool=" + finished.toolName()
+                    + " status=" + (finished.error() ? "error" : "completed"));
+        }
     }
 
     private void render(AgentEvent event) {

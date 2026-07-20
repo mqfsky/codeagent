@@ -120,6 +120,23 @@ class AnthropicModelAdapterTest {
     }
 
     @Test
+    void mapsAgentNotificationToUserTextBlock() {
+        RecordingTransport transport = new RecordingTransport(200, """
+                {"stop_reason":"end_turn","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}
+                """);
+        AnthropicModelAdapter adapter = new AnthropicModelAdapter(config(), registry(), transport);
+
+        adapter.next(List.of(new AgentNotificationMessage(
+                "task-1", "COMPLETED", "found <two> & three files")));
+
+        JsonNode message = transport.lastBody.get("messages").get(0);
+        assertEquals("user", message.get("role").asText());
+        assertEquals("<task-notification task_id=\"task-1\" status=\"COMPLETED\">"
+                        + "found &lt;two&gt; &amp; three files</task-notification>",
+                message.get("content").get(0).get("text").asText());
+    }
+
+    @Test
     void providerErrorIsNormalized() {
         RecordingTransport transport = new RecordingTransport(429, """
                 {"error":{"message":"rate limited"}}

@@ -77,6 +77,15 @@ public record TranscriptBlock(Kind kind, String id, String text, Optional<String
         return new TranscriptBlock(Kind.COMPACT, text);
     }
 
+    public static TranscriptBlock agentTask(String taskId, String text) {
+        String actualTaskId = Objects.requireNonNull(taskId, "taskId");
+        if (actualTaskId.isBlank()) {
+            throw new IllegalArgumentException("taskId must not be blank");
+        }
+        return new TranscriptBlock(Kind.AGENT_TASK, "agent_task:" + actualTaskId + ":" + text,
+                text, Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
     public static TranscriptBlock permissionAudit(String requestId, String text) {
         return new TranscriptBlock(Kind.PERMISSION, "permission:" + requestId,
                 text, Optional.empty(), Optional.empty(), Optional.empty());
@@ -104,6 +113,7 @@ public record TranscriptBlock(Kind kind, String id, String text, Optional<String
             case PERMISSION -> "permission: " + text;
             case DIAGNOSTIC -> text;
             case COMPACT -> "compact: " + text;
+            case AGENT_TASK -> "agent_task: " + text;
         };
     }
 
@@ -131,7 +141,8 @@ public record TranscriptBlock(Kind kind, String id, String text, Optional<String
         ASK_USER,
         PERMISSION,
         DIAGNOSTIC,
-        COMPACT
+        COMPACT,
+        AGENT_TASK
     }
 
     public enum ToolStatus {

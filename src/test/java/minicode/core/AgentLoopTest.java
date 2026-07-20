@@ -65,6 +65,52 @@ class AgentLoopTest {
     }
 
     @Test
+    void drainsAgentNotificationsBeforeModelStepAndPersistsThem() {
+        List<List<ChatMessage>> providerCalls = new ArrayList<>();
+        List<String> drainScopes = new ArrayList<>();
+        AgentNotificationMessage notification = new AgentNotificationMessage(
+                "task-7", "COMPLETED", "exploration finished");
+        TurnMessageSource source = (sessionId, turnId) -> {
+            drainScopes.add(sessionId + "/" + turnId);
+            return List.of(notification);
+        };
+        ModelAdapter model = messages -> {
+            providerCalls.add(List.copyOf(messages));
+            return new AssistantStep("done", AssistantKind.FINAL);
+        };
+        AgentLoop loop = new AgentLoop(model, AgentEventSink.noOp(), ToolExecutor.unsupported(),
+                ContextManager.noOp(), source);
+
+        AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("hi")), 1));
+
+        assertEquals(List.of("session-123/turn-1"), drainScopes);
+        assertEquals(notification, providerCalls.getFirst().get(1));
+        assertEquals(notification, result.messages().get(1));
+        PersistenceAction.AppendMessagesAction action = assertInstanceOf(
+                PersistenceAction.AppendMessagesAction.class, result.persistencePlan().actions().getFirst());
+        assertEquals(List.of(notification), action.messages());
+    }
+
+    @Test
+    void messageSourceFailureDoesNotInterruptTurn() {
+        AgentLoop loop = new AgentLoop(
+                messages -> new AssistantStep("done", AssistantKind.FINAL),
+                AgentEventSink.noOp(),
+                ToolExecutor.unsupported(),
+                ContextManager.noOp(),
+                (sessionId, turnId) -> {
+                    throw new IllegalStateException("inbox unavailable");
+                }
+        );
+
+        AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("hi")), 1));
+
+        assertEquals(AgentTurnStopReason.FINAL, result.stopReason());
+        assertTrue(result.messages().stream().noneMatch(AgentNotificationMessage.class::isInstance));
+        assertEquals("done", assertInstanceOf(AssistantMessage.class, result.messages().getLast()).content());
+    }
+
+    @Test
     void progressStepContinuesUntilFinal() {
         RecordingEventSink eventSink = new RecordingEventSink();
         SequenceModelAdapter adapter = new SequenceModelAdapter(

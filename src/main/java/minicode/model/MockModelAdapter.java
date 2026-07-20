@@ -7,6 +7,7 @@ import minicode.core.step.AssistantKind;
 import minicode.core.step.AssistantStep;
 import minicode.core.step.ContentKind;
 import minicode.core.loop.ModelAdapter;
+import minicode.core.loop.ForkableModelAdapter;
 import minicode.core.step.ToolCallsStep;
 import minicode.core.message.ChatMessage;
 import minicode.tools.api.ToolCall;
@@ -15,7 +16,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-public final class MockModelAdapter implements ModelAdapter {
+public final class MockModelAdapter implements ForkableModelAdapter {
     private final List<AgentStep> steps;
     private int index;
 
@@ -51,5 +52,11 @@ public final class MockModelAdapter implements ModelAdapter {
             return steps.getLast();
         }
         return steps.get(index++);
+    }
+
+    @Override
+    public ModelAdapter fork(minicode.tools.registry.ToolRegistry toolRegistry) {
+        Objects.requireNonNull(toolRegistry, "toolRegistry");
+        return new MockModelAdapter(steps);
     }
 }

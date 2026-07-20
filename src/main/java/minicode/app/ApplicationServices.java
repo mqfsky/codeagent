@@ -1,5 +1,15 @@
 package minicode.app;
 
+import minicode.agent.event.AgentTaskEventSink;
+import minicode.agent.model.AgentRunMode;
+import minicode.agent.runtime.AgentRunResultMapper;
+import minicode.agent.runtime.AgentRuntimeFactory;
+import minicode.agent.runtime.ChildToolRegistryFactory;
+import minicode.agent.runtime.ModelAdapterFactory;
+import minicode.agent.task.AgentInbox;
+import minicode.agent.task.AgentInboxTurnMessageSource;
+import minicode.agent.task.AgentTaskStore;
+import minicode.agent.task.SubAgentTaskManager;
 import minicode.context.manager.ContextManager;
 import minicode.context.accounting.TokenAccountingService;
 import minicode.context.compact.CompactRequest;
@@ -15,6 +25,7 @@ import minicode.config.ProviderKind;
 import minicode.config.RuntimeConfig;
 import minicode.core.event.AgentEventSink;
 import minicode.core.loop.AgentLoop;
+import minicode.core.loop.ForkableModelAdapter;
 import minicode.core.turn.AgentTurnRequest;
 import minicode.core.turn.AgentTurnResult;
 import minicode.core.message.ChatMessage;
@@ -39,6 +50,7 @@ import minicode.permissions.service.PromptingPermissionService;
 import minicode.permissions.store.JsonPermissionStore;
 import minicode.permissions.store.PermissionStore;
 import minicode.prompt.SystemPromptBuilder;
+import minicode.prompt.SubAgentPromptBuilder;
 import minicode.session.factory.SessionEventFactory;
 import minicode.session.runner.SessionPersistenceRunner;
 import minicode.session.plan.PersistenceAction;
@@ -47,6 +59,7 @@ import minicode.session.store.SessionStore;
 import minicode.skills.SkillDiscovery;
 import minicode.skills.SkillRegistry;
 import minicode.tools.builtin.AskUserTool;
+import minicode.tools.builtin.AgentTool;
 import minicode.tools.builtin.EditFileTool;
 import minicode.tools.builtin.GrepFilesTool;
 import minicode.tools.builtin.ListFilesTool;
@@ -56,6 +69,10 @@ import minicode.tools.builtin.PatchFileTool;
 import minicode.tools.builtin.ReadFilePathAccess;
 import minicode.tools.builtin.ReadFileTool;
 import minicode.tools.builtin.RunCommandTool;
+import minicode.tools.builtin.TaskCancelTool;
+import minicode.tools.builtin.TaskListTool;
+import minicode.tools.builtin.TaskOutputTool;
+import minicode.tools.builtin.TaskStatusTool;
 import minicode.tools.builtin.WriteFileTool;
 import minicode.tools.registry.ToolRegistry;
 import minicode.tools.result.ToolResultStorage;
@@ -91,6 +108,7 @@ import java.util.ArrayList;
  * @param cwd 当前 workspace 工作目录
  * @param sessionId 当前会话 id
  * @param runtimeConfig 运行配置；为空表示测试或无配置路径
+ * @param subAgentTaskManager 后台子 Agent 管理器；手工构造旧服务时为空
  */
 public record ApplicationServices(ToolRegistry toolRegistry,
                                   PermissionService permissionService,
@@ -109,7 +127,8 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                                   Path home,
                                   Path cwd,
                                   String sessionId,
-                                  Optional<RuntimeConfig> runtimeConfig) {
+                                  Optional<RuntimeConfig> runtimeConfig,
+                                  Optional<SubAgentTaskManager> subAgentTaskManager) {
     private static final Duration MODEL_METADATA_TIMEOUT = Duration.ofSeconds(3);
     private static final int LARGE_TOOL_RESULT_THRESHOLD_CHARS = 200_000;
     private static final int TOOL_RESULT_BATCH_BUDGET_CHARS = 400_000;
@@ -134,7 +153,31 @@ public record ApplicationServices(ToolRegistry toolRegistry,
                                String sessionId) {
         this(toolRegistry, permissionService, contextManager, sessionStore, sessionPersistenceRunner, agentLoop,
                 modelAdapter, compactService, systemPromptBuilder, workspacePathResolver, skillRegistry, mcpRuntime,
-                permissionStore, permissionStorePath, home, cwd, sessionId, Optional.empty());
+                permissionStore, permissionStorePath, home, cwd, sessionId, Optional.empty(), Optional.empty());
+    }
+
+    /** 保留引入多 Agent 之前的标准构造方法，兼容现有测试和嵌入调用方。 */
+    public ApplicationServices(ToolRegistry toolRegistry,
+                               PermissionService permissionService,
+                               ContextManager contextManager,
+                               SessionStore sessionStore,
+                               SessionPersistenceRunner sessionPersistenceRunner,
+                               AgentLoop agentLoop,
+                               ModelAdapter modelAdapter,
+                               CompactService compactService,
+                               SystemPromptBuilder systemPromptBuilder,
+                               WorkspacePathResolver workspacePathResolver,
+                               SkillRegistry skillRegistry,
+                               McpRuntime mcpRuntime,
+                               PermissionStore permissionStore,
+                               Path permissionStorePath,
+                               Path home,
+                               Path cwd,
+                               String sessionId,
+                               Optional<RuntimeConfig> runtimeConfig) {
+        this(toolRegistry, permissionService, contextManager, sessionStore, sessionPersistenceRunner, agentLoop,
+                modelAdapter, compactService, systemPromptBuilder, workspacePathResolver, skillRegistry, mcpRuntime,
+                permissionStore, permissionStorePath, home, cwd, sessionId, runtimeConfig, Optional.empty());
     }
 
     public ApplicationServices {
@@ -158,80 +201,101 @@ public record ApplicationServices(ToolRegistry toolRegistry,
             throw new IllegalArgumentException("sessionId must not be blank");
         }
         runtimeConfig = Objects.requireNonNull(runtimeConfig, "runtimeConfig");
+        subAgentTaskManager = Objects.requireNonNull(subAgentTaskManager, "subAgentTaskManager");
     }
 
+    /**
+     * 接收预构建适配器的兼容重载。内置的可分叉适配器会为每个子 Agent 重新绑定；
+     * 自定义有状态适配器应使用 {@link #createWithModelAdapterFactory}，以获得完整隔离。
+     */
     public static ApplicationServices create(Path home, Path cwd, String sessionId, ModelAdapter modelAdapter,
                                              AgentEventSink eventSink,
                                              PermissionPromptHandler permissionPromptHandler) {
-        Path actualHome = Objects.requireNonNull(home, "home");
-        Path actualCwd = Objects.requireNonNull(cwd, "cwd").toAbsolutePath().normalize();
-        Path permissionStorePath = actualHome.resolve("permissions.json");
-        PermissionStore permissionStore = new JsonPermissionStore(permissionStorePath);
-        PermissionService permissionService = new PromptingPermissionService(permissionPromptHandler, permissionStore);
-        WorkspacePathResolver workspacePathResolver = new WorkspacePathResolver();
-        SkillRegistry skillRegistry = new SkillRegistry(new SkillDiscovery(actualHome, actualCwd).discover());
+        return createWithAgentTaskEventSink(home, cwd, sessionId, modelAdapter, eventSink,
+                defaultAgentTaskEventSink(eventSink), permissionPromptHandler);
+    }
 
-        // 注册工具
-        ToolRegistry registry = createBuiltInToolRegistry(permissionService, workspacePathResolver, skillRegistry);
+    public static ApplicationServices createWithAgentTaskEventSink(
+            Path home, Path cwd, String sessionId, ModelAdapter modelAdapter,
+            AgentEventSink eventSink, AgentTaskEventSink agentTaskEventSink,
+            PermissionPromptHandler permissionPromptHandler) {
+        Objects.requireNonNull(modelAdapter, "modelAdapter");
+        return createWithModelFactory(home, cwd, sessionId, eventSink, agentTaskEventSink, permissionPromptHandler,
+                fixedParentModelFactory(modelAdapter), fixedChildModelFactory(modelAdapter), Optional.empty());
+    }
 
-        ContextManager contextManager = new ContextManager(
-                new ToolResultStorage(actualHome.resolve("tool-results")),
-                LARGE_TOOL_RESULT_THRESHOLD_CHARS,
-                TOOL_RESULT_BATCH_BUDGET_CHARS,
-                TOOL_RESULT_PREVIEW_CHARS
-        );
-        SessionStore sessionStore = new SessionStore(actualHome.resolve("sessions"));
-        Optional<String> lastEventUuid = sessionStore.latestEventUuid(sessionId, actualCwd.toString());
-        SessionPersistenceRunner persistenceRunner = new SessionPersistenceRunner(
-                sessionStore,
-                new SessionEventFactory(sessionId, actualCwd.toString(),
-                        java.time.Clock.systemUTC(),
-                        () -> UUID.randomUUID().toString(),
-                        lastEventUuid)
-        );
-        CompactService compactService = new CompactService();
-        AgentLoop agentLoop = new AgentLoop(modelAdapter, eventSink, registry, contextManager,
-                new ContextStatsCalculator(new TokenAccountingService(), new ModelContextWindow(128_000, 8_000)),
-                new AutoCompactController(compactService, AutoCompactPolicy.defaults()));
-        return new ApplicationServices(registry, permissionService, contextManager, sessionStore,
-                persistenceRunner, agentLoop, modelAdapter, compactService, new SystemPromptBuilder(), workspacePathResolver,
-                skillRegistry, McpRuntime.empty(), permissionStore, permissionStorePath, actualHome,
-                actualCwd, sessionId, Optional.empty());
+    /**
+     * 基于工厂的嵌入入口。父 Agent 注册表和每个子 Agent 注册表都会分别调用一次工厂，
+     * 从而保证每个适配器看到的工具结构与其实际可执行工具完全一致。
+     */
+    public static ApplicationServices createWithModelAdapterFactory(
+            Path home, Path cwd, String sessionId, ModelAdapterFactory modelAdapterFactory,
+            AgentEventSink eventSink, PermissionPromptHandler permissionPromptHandler) {
+        return createWithModelAdapterFactoryAndAgentTaskEventSink(
+                home, cwd, sessionId, modelAdapterFactory, eventSink,
+                defaultAgentTaskEventSink(eventSink), permissionPromptHandler);
+    }
+
+    /** 基于工厂的嵌入入口，并允许显式传入独立的子任务事件接收器。 */
+    public static ApplicationServices createWithModelAdapterFactoryAndAgentTaskEventSink(
+            Path home, Path cwd, String sessionId, ModelAdapterFactory modelAdapterFactory,
+            AgentEventSink eventSink, AgentTaskEventSink agentTaskEventSink,
+            PermissionPromptHandler permissionPromptHandler) {
+        ModelAdapterFactory actualFactory = Objects.requireNonNull(modelAdapterFactory, "modelAdapterFactory");
+        java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter> factory =
+                (registry, metadata) -> actualFactory.create(registry);
+        return createWithModelFactory(home, cwd, sessionId, eventSink, agentTaskEventSink, permissionPromptHandler,
+                factory, factory, Optional.empty());
     }
 
     public static ApplicationServices create(Path home, Path cwd, String sessionId, RuntimeConfig runtimeConfig,
                                              AgentEventSink eventSink,
                                              PermissionPromptHandler permissionPromptHandler) {
-        Objects.requireNonNull(runtimeConfig, "runtimeConfig");
-
-        return createWithModelFactory(home, cwd, sessionId, eventSink, permissionPromptHandler, (registry, metadata) -> {
-            if (runtimeConfig.provider() == ProviderKind.MOCK) {
-                return new MockModelAdapter("mock final");
-            }
-            if (runtimeConfig.provider() == ProviderKind.OPENAI_COMPATIBLE) {
-                return new OpenAIModelAdapter(runtimeConfig, registry);
-            }
-            return new AnthropicModelAdapter(runtimeConfig, registry,
-                    new HttpAnthropicTransport(java.net.http.HttpClient.newHttpClient(),
-                            runtimeConfig.providerTimeout()),
-                    Optional.of(resolveModelContextProfile(runtimeConfig, metadata).resolvedMaxOutputTokens()));
-        }, Optional.of(runtimeConfig));
+        return createWithAgentTaskEventSink(home, cwd, sessionId, runtimeConfig, eventSink,
+                defaultAgentTaskEventSink(eventSink), permissionPromptHandler);
     }
 
+    public static ApplicationServices createWithAgentTaskEventSink(
+            Path home, Path cwd, String sessionId, RuntimeConfig runtimeConfig,
+            AgentEventSink eventSink, AgentTaskEventSink agentTaskEventSink,
+            PermissionPromptHandler permissionPromptHandler) {
+        Objects.requireNonNull(runtimeConfig, "runtimeConfig");
+
+        java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter> factory =
+                configuredModelFactory(runtimeConfig);
+        return createWithModelFactory(home, cwd, sessionId, eventSink, agentTaskEventSink,
+                permissionPromptHandler, factory, factory, Optional.of(runtimeConfig));
+    }
+
+    /**
+     * 供测试或嵌入调用方覆盖已配置父适配器的兼容重载。
+     * 内置的可分叉适配器会为每个子 Agent 重新绑定；自定义适配器应优先使用工厂入口。
+     */
     public static ApplicationServices create(Path home, Path cwd, String sessionId, RuntimeConfig runtimeConfig,
                                              ModelAdapter modelAdapter,
                                              AgentEventSink eventSink,
                                              PermissionPromptHandler permissionPromptHandler) {
+        return createWithAgentTaskEventSink(home, cwd, sessionId, runtimeConfig, modelAdapter, eventSink,
+                defaultAgentTaskEventSink(eventSink), permissionPromptHandler);
+    }
+
+    public static ApplicationServices createWithAgentTaskEventSink(
+            Path home, Path cwd, String sessionId, RuntimeConfig runtimeConfig, ModelAdapter modelAdapter,
+            AgentEventSink eventSink, AgentTaskEventSink agentTaskEventSink,
+            PermissionPromptHandler permissionPromptHandler) {
         Objects.requireNonNull(runtimeConfig, "runtimeConfig");
         Objects.requireNonNull(modelAdapter, "modelAdapter");
-        return createWithModelFactory(home, cwd, sessionId, eventSink, permissionPromptHandler,
-                (ignored, metadata) -> modelAdapter, Optional.of(runtimeConfig));
+        return createWithModelFactory(home, cwd, sessionId, eventSink, agentTaskEventSink, permissionPromptHandler,
+                fixedParentModelFactory(modelAdapter), fixedChildModelFactory(modelAdapter),
+                Optional.of(runtimeConfig));
     }
 
     private static ApplicationServices createWithModelFactory(Path home, Path cwd, String sessionId,
                                                               AgentEventSink eventSink,
+                                                              AgentTaskEventSink agentTaskEventSink,
                                                               PermissionPromptHandler permissionPromptHandler,
-                                                              java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter> modelFactory,
+                                                              java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter> parentModelFactory,
+                                                              java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter> childModelFactory,
                                                               Optional<RuntimeConfig> runtimeConfig) {
         Path actualHome = Objects.requireNonNull(home, "home");
         Path actualCwd = Objects.requireNonNull(cwd, "cwd").toAbsolutePath().normalize();
@@ -261,7 +325,64 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         );
         // 向 config 里配置的 url 发送请求，获取 metadata
         Optional<ModelMetadata> modelMetadata = runtimeConfig.flatMap(ApplicationServices::fetchModelMetadata);
-        ModelAdapter modelAdapter = Objects.requireNonNull(modelFactory.apply(registry, modelMetadata), "modelAdapter");
+
+        // 子 Agent 使用独立的运行时图。后台模式每次都创建拒绝式权限服务和只读基础工具，
+        // 因此工作区外访问只会失败，不会占用主 TUI 的权限弹窗。
+        AgentTaskEventSink actualAgentTaskEventSink = Objects.requireNonNull(
+                agentTaskEventSink, "agentTaskEventSink");
+        ModelAdapterFactory childModelAdapterFactory = childRegistry ->
+                Objects.requireNonNull(childModelFactory.apply(childRegistry, modelMetadata), "child modelAdapter");
+        ModelContextWindow childContextWindow = runtimeConfig
+                .map(config -> modelContextWindow(config, modelMetadata))
+                .orElseGet(() -> new ModelContextWindow(128_000, 8_000));
+        AgentRuntimeFactory agentRuntimeFactory = new AgentRuntimeFactory(
+                mode -> mode == AgentRunMode.BACKGROUND
+                        ? createBackgroundReadOnlyToolRegistry()
+                        : registry,
+                new ChildToolRegistryFactory(),
+                childModelAdapterFactory,
+                new SubAgentPromptBuilder(),
+                () -> new ContextManager(
+                        new ToolResultStorage(actualHome.resolve("agent-tool-results")),
+                        LARGE_TOOL_RESULT_THRESHOLD_CHARS,
+                        TOOL_RESULT_BATCH_BUDGET_CHARS,
+                        TOOL_RESULT_PREVIEW_CHARS),
+                () -> new ContextStatsCalculator(new TokenAccountingService(), childContextWindow),
+                () -> new AutoCompactController(new CompactService(), AutoCompactPolicy.defaults()),
+                actualAgentTaskEventSink,
+                new AgentRunResultMapper()
+        );
+        AgentTaskStore agentTaskStore = new AgentTaskStore(actualHome.resolve("agent-tasks"));
+        AgentInbox agentInbox = new AgentInbox(agentTaskStore);
+        SubAgentTaskManager taskManager = new SubAgentTaskManager(
+                agentTaskStore,
+                agentInbox,
+                (request, cancellationToken) -> agentRuntimeFactory.run(request, cancellationToken),
+                actualAgentTaskEventSink
+        );
+        taskManager.recoverPersistedTasks(actualCwd.toString(), sessionId);
+        registry.register(new AgentTool((request, cancellationToken) -> {
+            permissionService.beginTurn(request.agentId());
+            try {
+                return agentRuntimeFactory.run(request, cancellationToken);
+            } finally {
+                permissionService.endTurn(request.agentId());
+            }
+        }, taskManager));
+        registry.register(new TaskListTool(taskManager));
+        registry.register(new TaskStatusTool(taskManager));
+        registry.register(new TaskOutputTool(taskManager));
+        registry.register(new TaskCancelTool(taskManager));
+
+        // 父 Adapter 必须在多 Agent 工具注册完成后创建，保证 provider schema 包含公开工具。
+        ModelAdapter modelAdapter;
+        try {
+            modelAdapter = Objects.requireNonNull(parentModelFactory.apply(registry, modelMetadata), "modelAdapter");
+        } catch (RuntimeException exception) {
+            taskManager.close();
+            mcpRuntime.close();
+            throw exception;
+        }
 
         // 创建会话存储服务
         SessionStore sessionStore = new SessionStore(actualHome.resolve("sessions"));
@@ -277,19 +398,60 @@ public record ApplicationServices(ToolRegistry toolRegistry,
 
         // 上下文压缩服务
         CompactService compactService = new CompactService();
+        AgentInboxTurnMessageSource turnMessageSource = new AgentInboxTurnMessageSource(agentInbox, actualCwd);
         AgentLoop agentLoop = runtimeConfig
                 .map(config -> new AgentLoop(modelAdapter, eventSink, registry, contextManager,
                         new ContextStatsCalculator(new TokenAccountingService(), modelContextWindow(config, modelMetadata)), // 上下文统计器
-                        new AutoCompactController(compactService, AutoCompactPolicy.defaults()))) // 自动压缩控制器，采用默认策略
-                .orElseGet(() -> new AgentLoop(modelAdapter, eventSink, registry, contextManager)); // 如果没有 runtimeconfig，就没上面两个
+                        new AutoCompactController(compactService, AutoCompactPolicy.defaults()), turnMessageSource)) // 自动压缩控制器，采用默认策略
+                .orElseGet(() -> new AgentLoop(modelAdapter, eventSink, registry, contextManager, turnMessageSource)); // 如果没有 runtimeconfig，就没上面两个
         return new ApplicationServices(registry, permissionService, contextManager, sessionStore,
                 persistenceRunner, agentLoop, modelAdapter, compactService, new SystemPromptBuilder(), workspacePathResolver,
                 skillRegistry, mcpRuntime, permissionStore, permissionStorePath, actualHome,
-                actualCwd, sessionId, runtimeConfig);
+                actualCwd, sessionId, runtimeConfig, Optional.of(taskManager));
+    }
+
+    private static java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter>
+    fixedParentModelFactory(ModelAdapter modelAdapter) {
+        ModelAdapter actualAdapter = Objects.requireNonNull(modelAdapter, "modelAdapter");
+        return (registry, metadata) -> actualAdapter instanceof ForkableModelAdapter forkable
+                ? forkable.fork(registry)
+                : actualAdapter;
+    }
+
+    private static java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter>
+    fixedChildModelFactory(ModelAdapter modelAdapter) {
+        ModelAdapter actualAdapter = Objects.requireNonNull(modelAdapter, "modelAdapter");
+        return (registry, metadata) -> actualAdapter instanceof ForkableModelAdapter forkable
+                ? forkable.fork(registry)
+                : messages -> actualAdapter.next(messages);
+    }
+
+    private static java.util.function.BiFunction<ToolRegistry, Optional<ModelMetadata>, ModelAdapter>
+    configuredModelFactory(RuntimeConfig runtimeConfig) {
+        RuntimeConfig actualConfig = Objects.requireNonNull(runtimeConfig, "runtimeConfig");
+        return (registry, metadata) -> {
+            if (actualConfig.provider() == ProviderKind.MOCK) {
+                return new MockModelAdapter("mock final");
+            }
+            if (actualConfig.provider() == ProviderKind.OPENAI_COMPATIBLE) {
+                return new OpenAIModelAdapter(actualConfig, registry);
+            }
+            return new AnthropicModelAdapter(actualConfig, registry,
+                    new HttpAnthropicTransport(java.net.http.HttpClient.newHttpClient(),
+                            actualConfig.providerTimeout()),
+                    Optional.of(resolveModelContextProfile(actualConfig, metadata).resolvedMaxOutputTokens()));
+        };
     }
 
     private static ModelContextWindow modelContextWindow(RuntimeConfig runtimeConfig) {
         return modelContextWindow(runtimeConfig, Optional.empty());
+    }
+
+    private static AgentTaskEventSink defaultAgentTaskEventSink(AgentEventSink eventSink) {
+        AgentEventSink actualEventSink = Objects.requireNonNull(eventSink, "eventSink");
+        return actualEventSink instanceof AgentTaskEventSink taskSink
+                ? taskSink
+                : AgentTaskEventSink.noOp();
     }
 
     private static ModelContextWindow modelContextWindow(RuntimeConfig runtimeConfig, Optional<ModelMetadata> metadata) {
@@ -345,6 +507,17 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         registry.register(new EditFileTool(permissionService, workspacePathResolver));
         registry.register(new PatchFileTool(permissionService, workspacePathResolver));
         registry.register(new ModifyFileTool(permissionService, workspacePathResolver));
+        return registry;
+    }
+
+    private static ToolRegistry createBackgroundReadOnlyToolRegistry() {
+        PermissionService denyWithoutPrompt = new PromptingPermissionService(
+                PermissionPromptHandler.unavailable(), PermissionStore.none());
+        WorkspacePathResolver resolver = new WorkspacePathResolver();
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(new ReadFileTool(ReadFilePathAccess.fromPermissionService(denyWithoutPrompt), resolver));
+        registry.register(new ListFilesTool(denyWithoutPrompt, resolver));
+        registry.register(new GrepFilesTool(denyWithoutPrompt, resolver));
         return registry;
     }
 
@@ -441,7 +614,11 @@ public record ApplicationServices(ToolRegistry toolRegistry,
     }
 
     public void close() {
-        mcpRuntime.close();
+        try {
+            subAgentTaskManager.ifPresent(SubAgentTaskManager::close);
+        } finally {
+            mcpRuntime.close();
+        }
     }
 
     private List<ChatMessage> retainedMessagesAfterCompactBoundary(ManualCompactResult result) {

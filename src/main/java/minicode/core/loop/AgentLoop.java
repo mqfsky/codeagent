@@ -57,6 +57,7 @@ public final class AgentLoop {
     private final ContextManager contextManager;
     private final ContextStatsCalculator contextStatsCalculator;
     private final AutoCompactController autoCompactController;
+    private final TurnMessageSource turnMessageSource;
     private final int maxEmptyResponseRetries;
 
     public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink) {
@@ -88,6 +89,12 @@ public final class AgentLoop {
     }
 
     public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
+                     ContextManager contextManager, TurnMessageSource turnMessageSource) {
+        this(modelAdapter, eventSink, toolExecutor, contextManager, defaultContextStatsCalculator(),
+                AutoCompactController.disabled(), 2, turnMessageSource);
+    }
+
+    public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
                      ContextManager contextManager, ContextStatsCalculator contextStatsCalculator) {
         this(modelAdapter, eventSink, toolExecutor, contextManager, contextStatsCalculator, 2);
     }
@@ -108,14 +115,30 @@ public final class AgentLoop {
 
     public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
                      ContextManager contextManager, ContextStatsCalculator contextStatsCalculator,
+                     AutoCompactController autoCompactController, TurnMessageSource turnMessageSource) {
+        this(modelAdapter, eventSink, toolExecutor, contextManager, contextStatsCalculator,
+                autoCompactController, 2, turnMessageSource);
+    }
+
+    public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
+                     ContextManager contextManager, ContextStatsCalculator contextStatsCalculator,
                      AutoCompactController autoCompactController,
                      int maxEmptyResponseRetries) {
+        this(modelAdapter, eventSink, toolExecutor, contextManager, contextStatsCalculator,
+                autoCompactController, maxEmptyResponseRetries, TurnMessageSource.noOp());
+    }
+
+    public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
+                     ContextManager contextManager, ContextStatsCalculator contextStatsCalculator,
+                     AutoCompactController autoCompactController,
+                     int maxEmptyResponseRetries, TurnMessageSource turnMessageSource) {
         this.modelAdapter = Objects.requireNonNull(modelAdapter, "modelAdapter");
         this.eventSink = Objects.requireNonNull(eventSink, "eventSink");
         this.toolExecutor = Objects.requireNonNull(toolExecutor, "toolExecutor");
         this.contextManager = Objects.requireNonNull(contextManager, "contextManager");
         this.contextStatsCalculator = Objects.requireNonNull(contextStatsCalculator, "contextStatsCalculator");
         this.autoCompactController = Objects.requireNonNull(autoCompactController, "autoCompactController");
+        this.turnMessageSource = Objects.requireNonNull(turnMessageSource, "turnMessageSource");
         if (maxEmptyResponseRetries < 0) {
             throw new IllegalArgumentException("maxEmptyResponseRetries must be non-negative");
         }
@@ -144,6 +167,9 @@ public final class AgentLoop {
 
             // 一个 turn 里可以有多个 step：每个 step 最多进行一次模型请求，并可能触发一组工具调用。
             for (int stepIndex = 0; stepIndex < request.maxSteps(); stepIndex++) {
+                // 后台 Agent 可能在本轮运行期间完成；每个模型 step 前都尝试注入新通知。
+                drainTurnMessages(request.sessionId(), request.turnId(), messages, actions);
+
                 // 1.模型请求前先处理上下文压力：统计 -> microcompact -> 再统计 -> 必要时 autoCompact。
                 // 上下文状态，统计当前 message 占了多少 token，算上下文窗口占用率和警告等级
                 ContextStats preCompactStats = contextStatsCalculator.calculate(List.copyOf(messages));
@@ -386,6 +412,20 @@ public final class AgentLoop {
 
     private static ContextStatsCalculator defaultContextStatsCalculator() {
         return new ContextStatsCalculator(new TokenAccountingService(), new ModelContextWindow(128_000, 8_000));
+    }
+
+    private void drainTurnMessages(String sessionId, String turnId, List<ChatMessage> messages,
+                                   List<PersistenceAction> actions) {
+        List<AgentNotificationMessage> notifications;
+        try {
+            notifications = List.copyOf(turnMessageSource.drain(sessionId, turnId));
+        } catch (RuntimeException ignored) {
+            // 收件箱或消息源异常只影响通知观察能力，不能中断当前对话轮次。
+            return;
+        }
+        for (AgentNotificationMessage notification : notifications) {
+            appendMessage(turnId, messages, actions, notification);
+        }
     }
 
     private AutoCompactResult runAutoCompactPreflight(String turnId, List<ChatMessage> messages,
@@ -736,7 +776,7 @@ public final class AgentLoop {
         try {
             eventSink.onEvent(event);
         } catch (RuntimeException ignored) {
-            // Sink failures are observational and must not interrupt core turn progression.
+            // 事件接收器异常只影响可观测性，不能中断核心对话轮次的推进。
         }
     }
 

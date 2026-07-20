@@ -60,19 +60,19 @@ public final class ToolRegistry implements ToolExecutor {
         } catch (CancellationRequestedException exception) {
             throw exception;
         } catch (RuntimeException exception) {
-            return ToolResult.error(messageOrDefault(exception, "Tool input validation failed"));
+            return validationError(tool, List.of(messageOrDefault(exception, "Tool input validation failed")));
         }
 
         if (validation == null) {
-            return ToolResult.error("Tool input validation failed: validator returned null");
+            return validationError(tool, List.of("validator returned null"));
         }
 
         if (!validation.valid()) {
-            return ToolResult.error(formatValidationErrors(actualCall.toolName(), validation));
+            return validationError(tool, validation.errors());
         }
 
         if (validation.normalizedInput().isEmpty()) {
-            return ToolResult.error("Tool input validation failed: valid result requires normalized input");
+            return validationError(tool, List.of("valid result requires normalized input"));
         }
 
         JsonNode normalizedInput = validation.normalizedInput().get();
@@ -91,9 +91,23 @@ public final class ToolRegistry implements ToolExecutor {
         }
     }
 
-    private static String formatValidationErrors(String toolName, ValidationResult validation) {
+    private static ToolResult validationError(Tool tool, List<String> errors) {
+        if (tool instanceof ToolValidationErrorHandler handler) {
+            try {
+                ToolResult result = handler.validationError(List.copyOf(errors));
+                if (result != null) {
+                    return result;
+                }
+            } catch (RuntimeException ignored) {
+                // 回退到 Registry 向后兼容的纯文本错误响应。
+            }
+        }
+        return ToolResult.error(formatValidationErrors(tool.metadata().name(), errors));
+    }
+
+    private static String formatValidationErrors(String toolName, List<String> errors) {
         StringJoiner joiner = new StringJoiner("; ");
-        validation.errors().forEach(joiner::add);
+        errors.forEach(joiner::add);
         return "Tool input validation failed for " + toolName + ": " + joiner;
     }
 

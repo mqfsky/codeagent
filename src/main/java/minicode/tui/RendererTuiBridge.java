@@ -1,5 +1,7 @@
 package minicode.tui;
 
+import minicode.agent.event.AgentTaskEvent;
+import minicode.agent.event.AgentTaskEventSink;
 import minicode.core.event.AgentEvent;
 import minicode.core.event.AgentEventSink;
 import minicode.permissions.api.PermissionPromptHandler;
@@ -9,7 +11,7 @@ import minicode.permissions.model.PermissionRequest;
 
 import java.util.Objects;
 
-public final class RendererTuiBridge implements AgentEventSink, PermissionPromptHandler {
+public final class RendererTuiBridge implements AgentEventSink, AgentTaskEventSink, PermissionPromptHandler {
     private volatile RendererTuiShell shell;
 
     void attach(RendererTuiShell shell) {
@@ -21,6 +23,14 @@ public final class RendererTuiBridge implements AgentEventSink, PermissionPrompt
         RendererTuiShell current = shell;
         if (current != null) {
             current.onAgentEvent(event);
+        }
+    }
+
+    @Override
+    public void onEvent(AgentTaskEvent event) {
+        RendererTuiShell current = shell;
+        if (current != null) {
+            current.onAgentTaskEvent(event);
         }
     }
 

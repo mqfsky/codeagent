@@ -58,6 +58,7 @@ public final class TuiRenderer {
             case PERMISSION -> prefixed("! Permission › ", plainLines(block.text()), "  ");
             case DIAGNOSTIC -> prefixed("· ", plainLines(block.text()), "  ");
             case COMPACT -> prefixed("↻ Context › ", plainLines(block.text()), "  ");
+            case AGENT_TASK -> prefixed("◎ Agent task › ", plainLines(block.text()), "  ");
         };
     }
 

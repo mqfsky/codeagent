@@ -1,5 +1,8 @@
 package minicode.tui;
 
+import minicode.agent.event.AgentTaskEvent;
+import minicode.agent.model.AgentTaskStatus;
+import minicode.agent.model.AgentType;
 import minicode.app.ApplicationServices;
 import minicode.core.event.AgentEvent;
 import minicode.core.event.AgentEventSink;
@@ -528,6 +531,28 @@ class MiniTuiTest {
         assertFalse(text.contains("context:"));
         assertTrue(text.contains("await_user: tool-1 Need input"));
         assertTrue(text.contains("cancelled: source=USER phase=TOOL_EXECUTION reason=stop"));
+    }
+
+    @Test
+    void eventSinkPrintsAgentTaskLifecycleAsOneLineWithTaskIdAndStatus() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        MiniTuiEventSink sink = new MiniTuiEventSink(output, event -> {
+        });
+
+        sink.onEvent(new AgentTaskEvent.StateChangedEvent(
+                "agent-1",
+                java.util.Optional.of("task-42"),
+                "parent-turn",
+                AgentType.EXPLORE,
+                java.time.Instant.EPOCH,
+                java.util.Optional.of(AgentTaskStatus.QUEUED),
+                AgentTaskStatus.RUNNING
+        ));
+
+        List<String> lines = output.toString(StandardCharsets.UTF_8).lines().toList();
+        assertEquals(1, lines.size());
+        assertEquals("agent_task: taskId=task-42 agentId=agent-1 role=explore status=running",
+                lines.getFirst());
     }
 
     @Test

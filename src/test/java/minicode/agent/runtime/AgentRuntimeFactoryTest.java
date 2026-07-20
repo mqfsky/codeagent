@@ -1,0 +1,162 @@
+package minicode.agent.runtime;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import minicode.agent.model.AgentRunMode;
+import minicode.agent.model.AgentTaskRequest;
+import minicode.agent.model.AgentType;
+import minicode.agent.event.AgentTaskEvent;
+import minicode.core.message.SystemMessage;
+import minicode.core.message.UserMessage;
+import minicode.model.MockModelAdapter;
+import minicode.tools.api.Tool;
+import minicode.tools.api.ToolContext;
+import minicode.tools.api.ValidationResult;
+import minicode.tools.metadata.ToolCapability;
+import minicode.tools.metadata.ToolMetadata;
+import minicode.tools.metadata.ToolOrigin;
+import minicode.tools.metadata.ToolStatus;
+import minicode.tools.registry.ToolRegistry;
+import minicode.tools.result.ToolResult;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class AgentRuntimeFactoryTest {
+    @Test
+    void builtInSpecsHaveFixedCapabilitiesAndLimits() {
+        assertEquals(Set.of(ToolCapability.READ), AgentSpec.forType(AgentType.EXPLORE).allowedCapabilities());
+        assertEquals(30, AgentSpec.forType(AgentType.EXPLORE).maxSteps());
+        assertEquals(Set.of(ToolCapability.READ), AgentSpec.forType(AgentType.PLAN).allowedCapabilities());
+        assertEquals(20, AgentSpec.forType(AgentType.PLAN).maxSteps());
+        assertEquals(Set.of(ToolCapability.READ, ToolCapability.WRITE, ToolCapability.COMMAND),
+                AgentSpec.forType(AgentType.GENERAL_PURPOSE).allowedCapabilities());
+        assertEquals(32, AgentSpec.forType(AgentType.GENERAL_PURPOSE).maxSteps());
+        assertFalse(AgentSpec.forType(AgentType.GENERAL_PURPOSE).supports(AgentRunMode.BACKGROUND));
+    }
+
+    @Test
+    void createsIndependentRuntimeWithOnlySystemAndDelegatedPrompt() {
+        ToolRegistry parent = registry();
+        List<ToolRegistry> adapterRegistries = new ArrayList<>();
+        AgentRuntimeFactory factory = new AgentRuntimeFactory(parent, tools -> {
+            adapterRegistries.add(tools);
+            return new MockModelAdapter("child answer");
+        });
+        AgentTaskRequest request = AgentTaskRequest.create(AgentType.EXPLORE, "inspect", "delegated prompt",
+                "parent-session", "parent-turn", ".", AgentRunMode.SYNC);
+
+        AgentRuntime first = factory.create(request);
+        AgentRuntime second = factory.create(AgentTaskRequest.create(AgentType.EXPLORE, "inspect again", "other",
+                "parent-session", "parent-turn", ".", AgentRunMode.SYNC));
+
+        assertNotSame(first.toolRegistry(), second.toolRegistry());
+        assertNotSame(first.contextManager(), second.contextManager());
+        assertNotSame(first.autoCompactController(), second.autoCompactController());
+        assertSame(first.toolRegistry(), adapterRegistries.getFirst());
+        assertEquals(List.of("read_file"), first.toolRegistry().list().stream()
+                .map(tool -> tool.metadata().name()).toList());
+        assertInstanceOf(SystemMessage.class, first.initialMessages().get(0));
+        assertEquals("delegated prompt", ((UserMessage) first.initialMessages().get(1)).content());
+        assertEquals(2, first.initialMessages().size());
+        assertEquals("child answer", first.run().output());
+    }
+
+    @Test
+    void backgroundIsReadOnlyAndRejectsGeneralPurpose() {
+        ChildToolRegistryFactory factory = new ChildToolRegistryFactory();
+        ToolRegistry background = factory.create(registry(), AgentSpec.forType(AgentType.PLAN),
+                AgentRunMode.BACKGROUND);
+
+        assertEquals(List.of("read_file"), background.list().stream()
+                .map(tool -> tool.metadata().name()).toList());
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> factory.create(registry(), AgentSpec.forType(AgentType.GENERAL_PURPOSE),
+                        AgentRunMode.BACKGROUND));
+        assertTrue(error.getMessage().contains("does not support background"));
+    }
+
+    @Test
+    void selectsBaseRegistryByRunModeBeforeCreatingAdapterAndExecutor() {
+        ToolRegistry synchronousBase = new ToolRegistry();
+        synchronousBase.register(tool("sync_read", ToolOrigin.BUILTIN, ToolCapability.READ));
+        ToolRegistry backgroundBase = new ToolRegistry();
+        backgroundBase.register(tool("background_read", ToolOrigin.BUILTIN, ToolCapability.READ));
+        List<ToolRegistry> adapterRegistries = new ArrayList<>();
+        AgentRuntimeFactory factory = new AgentRuntimeFactory(
+                mode -> mode == AgentRunMode.BACKGROUND ? backgroundBase : synchronousBase,
+                tools -> {
+                    adapterRegistries.add(tools);
+                    return new MockModelAdapter("done");
+                },
+                minicode.agent.event.AgentTaskEventSink.noOp());
+
+        AgentRuntime runtime = factory.create(AgentTaskRequest.create(AgentType.EXPLORE, "inspect", "prompt",
+                "session", "turn", ".", AgentRunMode.BACKGROUND));
+
+        assertEquals(List.of("background_read"), runtime.toolRegistry().list().stream()
+                .map(tool -> tool.metadata().name()).toList());
+        assertSame(runtime.toolRegistry(), adapterRegistries.getFirst());
+    }
+
+    @Test
+    void generalPurposeKeepsPermissionBearingToolsButNeverDelegationTools() {
+        ToolRegistry parent = registry();
+        ToolRegistry child = new ChildToolRegistryFactory().create(parent,
+                AgentSpec.forType(AgentType.GENERAL_PURPOSE), AgentRunMode.SYNC);
+
+        assertEquals(List.of("read_file", "write_file", "run_command", "mcp__server__tool"),
+                child.list().stream().map(tool -> tool.metadata().name()).toList());
+        assertSame(parent.find("write_file").orElseThrow(), child.find("write_file").orElseThrow());
+        assertSame(parent.find("run_command").orElseThrow(), child.find("run_command").orElseThrow());
+        assertSame(parent.find("mcp__server__tool").orElseThrow(),
+                child.find("mcp__server__tool").orElseThrow());
+    }
+
+    @Test
+    void synchronousRunPublishesLifecycleWithoutDurableTaskId() {
+        List<AgentTaskEvent> events = new ArrayList<>();
+        AgentRuntimeFactory factory = new AgentRuntimeFactory(
+                registry(), ignored -> new MockModelAdapter("done"), events::add);
+
+        factory.run(AgentTaskRequest.create(AgentType.EXPLORE, "inspect", "prompt",
+                "session", "parent-turn", ".", AgentRunMode.SYNC));
+
+        List<AgentTaskEvent.StateChangedEvent> states = events.stream()
+                .filter(AgentTaskEvent.StateChangedEvent.class::isInstance)
+                .map(AgentTaskEvent.StateChangedEvent.class::cast)
+                .toList();
+        assertEquals(List.of(minicode.agent.model.AgentTaskStatus.RUNNING,
+                        minicode.agent.model.AgentTaskStatus.COMPLETED),
+                states.stream().map(AgentTaskEvent.StateChangedEvent::status).toList());
+        assertTrue(states.stream().allMatch(state -> state.taskId().isEmpty()));
+    }
+
+    private static ToolRegistry registry() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(tool("read_file", ToolOrigin.BUILTIN, ToolCapability.READ));
+        registry.register(tool("write_file", ToolOrigin.BUILTIN, ToolCapability.WRITE));
+        registry.register(tool("run_command", ToolOrigin.BUILTIN, ToolCapability.COMMAND));
+        registry.register(tool("ask_user", ToolOrigin.BUILTIN, ToolCapability.ASK_USER));
+        registry.register(tool("agent", ToolOrigin.EXTENSION, ToolCapability.BACKGROUND_TASK));
+        registry.register(tool("task_list", ToolOrigin.EXTENSION, ToolCapability.READ));
+        registry.register(tool("mcp__server__tool", ToolOrigin.MCP, ToolCapability.COMMAND));
+        return registry;
+    }
+
+    private static Tool tool(String name, ToolOrigin origin, ToolCapability capability) {
+        JsonNode schema = JsonNodeFactory.instance.objectNode();
+        ToolMetadata metadata = new ToolMetadata(name, "test tool", schema, origin, Set.of(capability),
+                ToolStatus.AVAILABLE);
+        return new Tool() {
+            @Override public ToolMetadata metadata() { return metadata; }
+            @Override public JsonNode inputSchema() { return schema; }
+            @Override public ValidationResult validateInput(JsonNode input) { return ValidationResult.valid(input); }
+            @Override public ToolResult run(JsonNode input, ToolContext context) { return ToolResult.ok("ok"); }
+        };
+    }
+}

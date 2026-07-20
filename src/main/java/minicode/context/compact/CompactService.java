@@ -5,6 +5,7 @@ import minicode.core.message.AssistantMessage;
 import minicode.core.message.AssistantProgressMessage;
 import minicode.core.message.AssistantThinkingMessage;
 import minicode.core.message.AssistantToolCallMessage;
+import minicode.core.message.AgentNotificationMessage;
 import minicode.core.message.ChatMessage;
 import minicode.core.message.ChatMessages;
 import minicode.core.message.ContextSummaryMessage;
@@ -241,6 +242,9 @@ public final class CompactService {
         for (ChatMessage message : messages) {
             switch (message) {
                 case UserMessage user -> parts.add("[User]: " + user.content());
+                case AgentNotificationMessage notification -> parts.add(
+                        "[Agent Task " + notification.taskId() + " " + notification.status() + "]: "
+                                + notification.content());
                 case AssistantMessage assistant -> parts.add("[Assistant]: " + assistant.content());
                 case AssistantProgressMessage progress -> parts.add("[Assistant Progress]: " + progress.content());
                 case AssistantThinkingMessage ignored ->

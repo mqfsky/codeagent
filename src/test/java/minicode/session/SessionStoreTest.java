@@ -3,6 +3,7 @@ package minicode.session;
 import minicode.context.compact.CompactMetadata;
 import minicode.context.compact.CompactTrigger;
 import minicode.core.message.AssistantMessage;
+import minicode.core.message.AgentNotificationMessage;
 import minicode.core.message.AssistantProgressMessage;
 import minicode.core.message.AssistantToolCallMessage;
 import minicode.core.message.ContextSummaryMessage;
@@ -61,6 +62,7 @@ class SessionStoreTest {
         runner.apply(new TurnPersistencePlan(List.of(
                 new PersistenceAction.AppendMessagesAction(List.of(
                         new UserMessage("hello"),
+                        new AgentNotificationMessage("task-1", "COMPLETED", "result preview"),
                         new AssistantMessage("answer"),
                         new AssistantProgressMessage("working"),
                         new ToolResultMessage("tool-1", "read_file", "output", false),
@@ -76,6 +78,7 @@ class SessionStoreTest {
         List<String> lines = jsonLines();
 
         assertTrue(lines.stream().anyMatch(line -> line.contains("\"type\":\"user\"")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("\"type\":\"agent_notification\"")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("\"type\":\"assistant\"")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("\"type\":\"progress\"")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("\"type\":\"tool_result\"")));
@@ -296,6 +299,37 @@ class SessionStoreTest {
                 store.readAll("session-1", "E:/work").getFirst().message().orElseThrow());
         assertEquals(Optional.of(usage()), restored.providerUsage());
         assertEquals(UsageStaleness.stale("compact"), restored.usageStaleness());
+    }
+
+    @Test
+    void agentNotificationRoundTripsWithStableRoleAndEventType() {
+        SessionStore store = new SessionStore(tempDir);
+        SessionEventFactory factory = new SessionEventFactory("session-1", "E:/work");
+        AgentNotificationMessage message = new AgentNotificationMessage(
+                "task-42", "COMPLETED", "analysis result");
+
+        store.append(factory.message(message));
+
+        assertEquals(message, store.readAll("session-1", "E:/work").getFirst().message().orElseThrow());
+        String line = jsonLines().getFirst();
+        assertTrue(line.contains("\"type\":\"agent_notification\""));
+        assertTrue(line.contains("\"role\":\"agent_notification\""));
+        assertTrue(line.contains("\"taskId\":\"task-42\""));
+        assertTrue(line.contains("\"status\":\"COMPLETED\""));
+    }
+
+    @Test
+    void transcriptProjectorPreservesAgentNotificationIdentityAndStatus() {
+        SessionEventFactory factory = new SessionEventFactory("session-1", "E:/work");
+        AgentNotificationMessage message = new AgentNotificationMessage(
+                "task-42", "FAILED", "provider unavailable");
+
+        TranscriptEntry entry = new SessionTranscriptProjector()
+                .project(List.of(factory.message(message)))
+                .getFirst();
+
+        assertEquals(TranscriptEntry.Kind.NOTIFICATION, entry.kind());
+        assertEquals("task task-42 [FAILED]\nprovider unavailable", entry.body());
     }
 
     @Test
