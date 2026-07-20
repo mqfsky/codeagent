@@ -140,6 +140,7 @@ public class ContextManager {
             return new ToolResultBudgetResult(actualResults, List.of());
         }
 
+        // 计算本轮工具结果的总字符数
         int totalChars = actualResults.stream().mapToInt(message -> message.content().length()).sum();
         if (totalChars <= toolResultBatchBudget) {
             return new ToolResultBudgetResult(actualResults, List.of());
@@ -148,11 +149,14 @@ public class ContextManager {
         List<ToolResultMessage> budgetedResults = new ArrayList<>(actualResults);
         List<ToolResultReplacementRecord> replacements = new ArrayList<>();
         List<Integer> candidateIndexes = new ArrayList<>();
+        // 过滤掉已经替换过文本的工具输出
         for (int index = 0; index < budgetedResults.size(); index++) {
             if (!isPersistedOutput(budgetedResults.get(index).content())) {
                 candidateIndexes.add(index);
             }
         }
+
+        // 按照内容长度从大到小排序
         candidateIndexes.sort(Comparator
                 .comparingInt((Integer index) -> budgetedResults.get(index).content().length())
                 .reversed());

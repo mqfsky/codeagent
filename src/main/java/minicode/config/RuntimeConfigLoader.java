@@ -14,11 +14,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class RuntimeConfigLoader {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
     private static final Duration DEFAULT_PROVIDER_TIMEOUT = Duration.ofSeconds(300);
+    private static final Pattern ENV_PLACEHOLDER = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)}");
 
     private RuntimeConfigLoader() {
     }
@@ -87,7 +90,7 @@ public final class RuntimeConfigLoader {
         Duration providerTimeout = providerTimeout(firstText(input.env(), homeSettings, cwdSettings,
                 "CODEAGENT_PROVIDER_TIMEOUT_SECONDS", "providerTimeoutSeconds", ""));
         // 合并用户级与工作区级 MCP Server 配置，工作区中的同名配置优先。
-        Map<String, McpServerConfig> mcpServers = mcpServers(homeSettings, cwdSettings);
+        Map<String, McpServerConfig> mcpServers = mcpServers(homeSettings, cwdSettings, input.env());
 
         // 模型名称是运行必需项，所有来源都没有配置时立即终止启动。
         if (model.isBlank()) {
@@ -118,14 +121,16 @@ public final class RuntimeConfigLoader {
         );
     }
 
-    private static Map<String, McpServerConfig> mcpServers(JsonNode homeSettings, JsonNode cwdSettings) {
+    private static Map<String, McpServerConfig> mcpServers(JsonNode homeSettings, JsonNode cwdSettings,
+                                                            Map<String, String> processEnv) {
         Map<String, McpServerConfig> merged = new LinkedHashMap<>();
-        mergeMcpServers(merged, homeSettings == null ? null : homeSettings.get("mcpServers"));
-        mergeMcpServers(merged, cwdSettings == null ? null : cwdSettings.get("mcpServers"));
+        mergeMcpServers(merged, homeSettings == null ? null : homeSettings.get("mcpServers"), processEnv);
+        mergeMcpServers(merged, cwdSettings == null ? null : cwdSettings.get("mcpServers"), processEnv);
         return Map.copyOf(merged);
     }
 
-    private static void mergeMcpServers(Map<String, McpServerConfig> target, JsonNode servers) {
+    private static void mergeMcpServers(Map<String, McpServerConfig> target, JsonNode servers,
+                                        Map<String, String> processEnv) {
         if (servers == null || !servers.isObject()) {
             return;
         }
@@ -135,34 +140,89 @@ public final class RuntimeConfigLoader {
                 return;
             }
             McpServerConfig existing = target.get(entry.getKey());
-            target.put(entry.getKey(), mergeMcpServer(existing, node));
+            target.put(entry.getKey(), mergeMcpServer(existing, node, processEnv));
         });
     }
 
-    private static McpServerConfig mergeMcpServer(McpServerConfig existing, JsonNode node) {
-        String command = settingsText(node, "command");
-        if (command.isBlank() && existing != null) {
-            command = existing.command();
+    private static McpServerConfig mergeMcpServer(McpServerConfig existing, JsonNode node,
+                                                   Map<String, String> processEnv) {
+        String layerCommand = settingsText(node, "command");
+        String layerUrl = settingsText(node, "url");
+        boolean hasLayerCommand = !layerCommand.isBlank();
+        boolean hasLayerUrl = !layerUrl.isBlank();
+
+        String command;
+        String url;
+        if (hasLayerCommand && !hasLayerUrl) {
+            command = layerCommand;
+            url = null;
+        } else if (hasLayerUrl && !hasLayerCommand) {
+            command = "";
+            url = layerUrl;
+        } else if (hasLayerCommand) {
+            command = layerCommand;
+            url = layerUrl;
+        } else {
+            command = existing == null ? "" : existing.command();
+            url = existing == null ? null : existing.url().orElse(null);
         }
-        List<String> args = node.has("args") && node.get("args").isArray()
+
+        boolean usesStdioFields = !command.isBlank();
+        boolean usesHttpFields = url != null && !url.isBlank();
+        boolean inheritStdioFields = usesStdioFields && existing != null && !existing.command().isBlank();
+        boolean inheritHttpFields = usesHttpFields && existing != null && existing.url().isPresent();
+
+        List<String> args = usesStdioFields && node.has("args") && node.get("args").isArray()
                 ? stringList(node.get("args"))
-                : existing == null ? List.of() : existing.args();
+                : inheritStdioFields ? existing.args() : List.of();
         Map<String, String> env = new LinkedHashMap<>();
-        if (existing != null) {
+        if (inheritStdioFields) {
             env.putAll(existing.env());
         }
         JsonNode envNode = node.get("env");
-        if (envNode != null && envNode.isObject()) {
+        if (usesStdioFields && envNode != null && envNode.isObject()) {
             envNode.fields().forEachRemaining(entry -> env.put(entry.getKey(), entry.getValue().asText("")));
         }
-        String cwd = settingsText(node, "cwd");
-        if (cwd.isBlank() && existing != null) {
+        String cwd = usesStdioFields ? settingsText(node, "cwd") : null;
+        if (usesStdioFields && cwd.isBlank() && inheritStdioFields) {
             cwd = existing.cwd().orElse(null);
         }
+
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (inheritHttpFields) {
+            headers.putAll(existing.headers());
+        }
+        JsonNode headersNode = node.get("headers");
+        if (usesHttpFields && headersNode != null && headersNode.isObject()) {
+            headersNode.fields().forEachRemaining(entry -> putHeader(headers, entry.getKey(),
+                    expandEnvironment(entry.getValue().asText(""), processEnv)));
+        }
+
         boolean enabled = node.has("enabled") ? node.get("enabled").asBoolean(true) : existing == null || existing.enabled();
         Duration initializeTimeout = existing == null ? null : existing.initializeTimeout();
         Duration callTimeout = existing == null ? null : existing.callTimeout();
-        return new McpServerConfig(command, args, cwd, env, enabled, initializeTimeout, callTimeout);
+        return new McpServerConfig(command, args, cwd, env, url, headers, enabled,
+                initializeTimeout, callTimeout);
+    }
+
+    private static String expandEnvironment(String value, Map<String, String> processEnv) {
+        Matcher matcher = ENV_PLACEHOLDER.matcher(value);
+        StringBuilder expanded = new StringBuilder(value.length());
+        while (matcher.find()) {
+            String replacement = processEnv.get(matcher.group(1));
+            matcher.appendReplacement(expanded, Matcher.quoteReplacement(
+                    replacement == null ? matcher.group() : replacement));
+        }
+        matcher.appendTail(expanded);
+        return expanded.toString();
+    }
+
+    private static void putHeader(Map<String, String> headers, String name, String value) {
+        headers.keySet().stream()
+                .filter(existingName -> existingName.equalsIgnoreCase(name))
+                .findFirst()
+                .ifPresent(headers::remove);
+        headers.put(name, value);
     }
 
     private static List<String> stringList(JsonNode array) {
