@@ -178,8 +178,6 @@ public final class AnthropicModelAdapter implements ForkableModelAdapter {
             }
             if (message instanceof UserMessage user) {
                 pushBlock(converted, "user", textBlock(user.content()));
-            } else if (message instanceof AgentNotificationMessage notification) {
-                pushBlock(converted, "user", textBlock(notification.toModelText()));
             } else if (message instanceof ContextSummaryMessage summary) {
                 pushBlock(converted, "user", textBlock("[Context Summary from earlier conversation]\n" + summary.content()));
             } else if (message instanceof AssistantThinkingMessage thinking) {

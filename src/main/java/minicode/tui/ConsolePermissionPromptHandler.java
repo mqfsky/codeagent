@@ -19,8 +19,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class ConsolePermissionPromptHandler implements PermissionPromptHandler {
-    private final BufferedReader input;
+    private static final Runnable NO_PROMPT_HOOK = new NoPromptHook();
+
+    private final LineInput input;
     private final PrintWriter output;
+    private final Runnable beforePrompt;
+    private final Runnable afterPrompt;
 
     public ConsolePermissionPromptHandler(InputStream input, OutputStream output) {
         this(new BufferedReader(new InputStreamReader(Objects.requireNonNull(input, "input"), StandardCharsets.UTF_8)),
@@ -28,22 +32,36 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
     }
 
     public ConsolePermissionPromptHandler(BufferedReader input, OutputStream output) {
+        this(new BufferedLineInput(Objects.requireNonNull(input, "input")), output,
+                NO_PROMPT_HOOK, NO_PROMPT_HOOK);
+    }
+
+    public ConsolePermissionPromptHandler(ConsoleInputCoordinator input, OutputStream output) {
+        this(Objects.requireNonNull(input, "input")::readPermissionLine,
+                output, input::beginPermission, input::endPermission);
+    }
+
+    private ConsolePermissionPromptHandler(LineInput input, OutputStream output,
+                                           Runnable beforePrompt, Runnable afterPrompt) {
         this.input = Objects.requireNonNull(input, "input");
         this.output = new PrintWriter(Objects.requireNonNull(output, "output"), true, StandardCharsets.UTF_8);
+        this.beforePrompt = Objects.requireNonNull(beforePrompt, "beforePrompt");
+        this.afterPrompt = Objects.requireNonNull(afterPrompt, "afterPrompt");
     }
 
     @Override
     public PermissionPromptResult prompt(PermissionRequest request) {
-        // 在终端打印选项
-        output.println("permission: " + request.details().title());
-        output.println(request.details().body());
-        for (String fact : request.details().facts()) {
-            output.println("  " + fact);
-        }
-        output.println("Waiting for permission choice. Enter a number, key, [key], or label.");
-        renderChoices(request);
-
+        beforePrompt.run();
         try {
+            // 在终端打印选项
+            output.println("permission: " + request.details().title());
+            output.println(request.details().body());
+            for (String fact : request.details().facts()) {
+                output.println("  " + fact);
+            }
+            output.println("Waiting for permission choice. Enter a number, key, [key], or label.");
+            renderChoices(request);
+
             PermissionChoice choice = readChoice(request);
             // 如果是 deny，且选项包含 feedback，需要输入反馈
             if (choice.requiresFeedback()) {
@@ -61,6 +79,8 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
             return PermissionPromptResult.deny(choice.key(), choice.decision(), null);
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
+        } finally {
+            afterPrompt.run();
         }
     }
 
@@ -167,5 +187,12 @@ public final class ConsolePermissionPromptHandler implements PermissionPromptHan
         return decision == PermissionDecision.ALLOW_ONCE
                 || decision == PermissionDecision.ALLOW_TURN
                 || decision == PermissionDecision.ALLOW_ALWAYS;
+    }
+
+    private static final class NoPromptHook implements Runnable {
+        @Override
+        public void run() {
+            // BufferedReader mode does not need coordination hooks.
+        }
     }
 }

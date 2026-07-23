@@ -1,6 +1,7 @@
 package minicode.tui;
 
 import minicode.app.ApplicationServices;
+import minicode.agent.task.SubAgentTaskManager;
 import minicode.core.turn.AgentTurnResult;
 import minicode.core.turn.CancellationDetails;
 import minicode.core.turn.EmptyFallbackDetails;
@@ -30,6 +31,8 @@ public final class MiniTui {
     private final LineInput input;
     private final PrintWriter output;
     private final int maxSteps;
+    private final Object turnLock = new Object();
+    private boolean turnRunning;
 
     public MiniTui(ApplicationServices services, InputStream input, OutputStream output) {
         this(services, new BufferedLineInput(new BufferedReader(new InputStreamReader(Objects.requireNonNull(input, "input"), StandardCharsets.UTF_8))),
@@ -57,6 +60,10 @@ public final class MiniTui {
             throw new IllegalArgumentException("maxSteps must be positive");
         }
         this.maxSteps = maxSteps;
+        SubAgentTaskManager taskManager = services.subAgentTaskManager().orElse(null);
+        if (taskManager != null) {
+            taskManager.setNotificationListener(this::startNotificationTurnIfIdle);
+        }
     }
 
     public void runOnce() {
@@ -95,6 +102,10 @@ public final class MiniTui {
         if ("exit".equalsIgnoreCase(trimmed) || "quit".equalsIgnoreCase(trimmed)) {
             return false;
         }
+        if (isTurnRunning()) {
+            output.println("busy: wait for the current turn to finish");
+            return true;
+        }
         // 处理主动压缩指令
         if ("/compact".equals(trimmed)) {
             runCompactCommand();
@@ -113,13 +124,25 @@ public final class MiniTui {
             return true;
         }
 
+        if (!beginTurn()) {
+            output.println("busy: wait for the current turn to finish");
+            return true;
+        }
+        try {
+            runUserTurn(line);
+        } finally {
+            finishTurn();
+        }
+        return true;
+    }
+
+    private void runUserTurn(String line) {
         // 2. 加载历史 messages：从最近一次 compact boundary 之后恢复可喂给模型的上下文。
         List<ChatMessage> history = services.sessionMessages();
 
         // 3. 把本轮输入包装成 UserMessage，并先追加到 session，确保用户输入可恢复。
         UserMessage userMessage = new UserMessage(line);
         output.println("user: " + userMessage.content());
-        // 追加至 session
         services.sessionPersistenceRunner().apply(new TurnPersistencePlan(
                 List.of(new PersistenceAction.AppendMessagesAction(List.of(userMessage)))
         ));
@@ -127,13 +150,69 @@ public final class MiniTui {
         // 4. 构造本轮 messages：历史上下文 + 本轮用户输入；turnRequest 会再补 fresh system prompt。
         List<ChatMessage> turnMessages = new java.util.ArrayList<>(history);
         turnMessages.add(userMessage);
+        runAndPersistTurn(turnMessages);
+    }
 
-        // 5. 进入 Agent Loop：ApplicationServices 会包一层权限生命周期，再调用 agentLoop.runTurn。
-        AgentTurnResult result = services.runTurn(services.turnRequest(List.copyOf(turnMessages), maxSteps));
-        // 将 action 追加至 session
+    /** 后台任务完成且父 Agent 空闲时，自动启动一轮结果汇总。 */
+    private void startNotificationTurnIfIdle() {
+        SubAgentTaskManager taskManager = services.subAgentTaskManager().orElse(null);
+        if (taskManager == null || !taskManager.hasNotifications()) {
+            return;
+        }
+
+        Thread thread;
+        synchronized (turnLock) {
+            if (turnRunning || !taskManager.hasNotifications()) {
+                return;
+            }
+            turnRunning = true;
+            thread = Thread.ofVirtual()
+                    .name("minicode-line-agent-notification")
+                    .unstarted(this::runNotificationTurn);
+        }
+        thread.start();
+    }
+
+    private void runNotificationTurn() {
+        try {
+            runAndPersistTurn(services.sessionMessages());
+        } catch (RuntimeException exception) {
+            output.println("notification_turn_failed: "
+                    + Objects.toString(exception.getMessage(), "unknown error"));
+        } finally {
+            finishTurn();
+        }
+    }
+
+    private void runAndPersistTurn(List<ChatMessage> messages) {
+        AgentTurnResult result = services.runTurn(
+                services.turnRequest(List.copyOf(messages), maxSteps));
         services.sessionPersistenceRunner().apply(result.persistencePlan());
         renderTurnResult(result);
-        return true;
+    }
+
+    private boolean beginTurn() {
+        synchronized (turnLock) {
+            if (turnRunning) {
+                return false;
+            }
+            turnRunning = true;
+            return true;
+        }
+    }
+
+    private boolean isTurnRunning() {
+        synchronized (turnLock) {
+            return turnRunning;
+        }
+    }
+
+    private void finishTurn() {
+        synchronized (turnLock) {
+            turnRunning = false;
+        }
+        // 当前 Turn 期间刚完成的任务会在这里补一次唤醒。
+        startNotificationTurnIfIdle();
     }
 
     private void runCompactCommand() {

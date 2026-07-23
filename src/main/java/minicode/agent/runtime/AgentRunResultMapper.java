@@ -2,16 +2,16 @@ package minicode.agent.runtime;
 
 import minicode.agent.model.AgentRunResult;
 import minicode.core.message.AssistantMessage;
-import minicode.core.message.AssistantProgressMessage;
 import minicode.core.message.ChatMessage;
 import minicode.core.turn.AgentTurnResult;
+import minicode.core.turn.AgentTurnStopReason;
 import minicode.core.turn.CancellationDetails;
 import minicode.core.turn.EmptyFallbackDetails;
 import minicode.core.turn.ModelErrorDetails;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /** 将核心循环结果转换为稳定的子 Agent 运行时结果契约。 */
 public final class AgentRunResultMapper {
@@ -19,10 +19,17 @@ public final class AgentRunResultMapper {
 
     public AgentRunResult map(AgentTurnResult turnResult) {
         AgentTurnResult result = Objects.requireNonNull(turnResult, "turnResult");
-        String output = assistantOutput(result.messages());
+        Optional<String> finalOutput = result.stopReason() == AgentTurnStopReason.FINAL
+                ? terminalFinalOutput(result.messages())
+                : Optional.empty();
+        String output = finalOutput.orElse(EMPTY_OUTPUT);
         String reason = result.stopReason().name();
         return switch (result.stopReason()) {
-            case FINAL, MAX_STEPS -> AgentRunResult.completed(output, reason);
+            case FINAL -> finalOutput.isPresent()
+                    ? AgentRunResult.completed(output, reason)
+                    : AgentRunResult.failed(output, reason, "Agent completed without a final response");
+            case MAX_STEPS -> AgentRunResult.failed(output, reason,
+                    "Child agent reached maximum steps");
             case MODEL_ERROR -> AgentRunResult.failed(output, reason,
                     ((ModelErrorDetails) result.stopDetails().orElseThrow()).error().message());
             case CANCELLED -> AgentRunResult.failed(output, reason,
@@ -37,18 +44,12 @@ public final class AgentRunResultMapper {
         };
     }
 
-    private static String assistantOutput(List<ChatMessage> messages) {
-        List<String> parts = new ArrayList<>();
-        for (ChatMessage message : messages) {
-            String content = switch (message) {
-                case AssistantMessage assistant -> assistant.content();
-                case AssistantProgressMessage progress -> progress.content();
-                default -> "";
-            };
-            if (!content.isBlank()) {
-                parts.add(content);
-            }
+    private static Optional<String> terminalFinalOutput(List<ChatMessage> messages) {
+        if (!messages.isEmpty()
+                && messages.getLast() instanceof AssistantMessage assistant
+                && !assistant.content().isBlank()) {
+            return Optional.of(assistant.content());
         }
-        return parts.isEmpty() ? EMPTY_OUTPUT : String.join("\n\n", parts);
+        return Optional.empty();
     }
 }

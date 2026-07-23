@@ -1,7 +1,7 @@
 package minicode.tui;
 
-import minicode.agent.event.AgentTaskEvent;
-import minicode.agent.model.AgentTaskStatus;
+import minicode.agent.model.AgentRunMode;
+import minicode.agent.model.AgentTaskRequest;
 import minicode.agent.model.AgentType;
 import minicode.app.ApplicationServices;
 import minicode.core.event.AgentEvent;
@@ -39,6 +39,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -534,28 +536,6 @@ class MiniTuiTest {
     }
 
     @Test
-    void eventSinkPrintsAgentTaskLifecycleAsOneLineWithTaskIdAndStatus() {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        MiniTuiEventSink sink = new MiniTuiEventSink(output, event -> {
-        });
-
-        sink.onEvent(new AgentTaskEvent.StateChangedEvent(
-                "agent-1",
-                java.util.Optional.of("task-42"),
-                "parent-turn",
-                AgentType.EXPLORE,
-                java.time.Instant.EPOCH,
-                java.util.Optional.of(AgentTaskStatus.QUEUED),
-                AgentTaskStatus.RUNNING
-        ));
-
-        List<String> lines = output.toString(StandardCharsets.UTF_8).lines().toList();
-        assertEquals(1, lines.size());
-        assertEquals("agent_task: taskId=task-42 agentId=agent-1 role=explore status=running",
-                lines.getFirst());
-    }
-
-    @Test
     void eventSinkDoesNotTreatOrdinaryToolErrorsAsDenyFeedback() {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         MiniTuiEventSink sink = new MiniTuiEventSink(output, event -> {
@@ -636,6 +616,38 @@ class MiniTuiTest {
         assertTrue(events.stream().noneMatch(event -> event.message().orElse(null) instanceof SystemMessage));
     }
 
+    @Test
+    void completedBackgroundAgentAutomaticallyContinuesIdleParent() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        CountDownLatch summarized = new CountDownLatch(1);
+        ModelAdapter adapter = new BackgroundNotificationModelAdapter(
+                summarized, "后台完整结果", "父 Agent 已汇总后台结果", "unused");
+        ApplicationServices services = services(adapter, output, AgentEventSink.noOp());
+        try {
+            new MiniTui(services, input(""), output);
+            services.subAgentTaskManager().orElseThrow().submit(AgentTaskRequest.create(
+                    AgentType.EXPLORE,
+                    "inspect",
+                    "inspect repository",
+                    "session-1",
+                    "parent-turn",
+                    services.cwd().toString(),
+                    AgentRunMode.BACKGROUND));
+
+            assertTrue(summarized.await(2, TimeUnit.SECONDS));
+            waitUntil(() -> output.toString(StandardCharsets.UTF_8)
+                    .contains("assistant: 父 Agent 已汇总后台结果"));
+            waitUntil(() -> services.sessionMessages().stream()
+                    .anyMatch(message -> message instanceof AssistantMessage assistant
+                            && assistant.content().equals("父 Agent 已汇总后台结果")));
+            assertTrue(services.sessionMessages().stream()
+                    .anyMatch(message -> message instanceof AssistantMessage assistant
+                            && assistant.content().equals("父 Agent 已汇总后台结果")));
+        } finally {
+            services.close();
+        }
+    }
+
     private ApplicationServices services(ModelAdapter model, ByteArrayOutputStream output, AgentEventSink extraSink) {
         return ApplicationServices.create(
                 tempDir.resolve("home"),
@@ -671,6 +683,14 @@ class MiniTuiTest {
 
     private static ByteArrayInputStream input(String text) {
         return new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void waitUntil(java.util.function.BooleanSupplier condition) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(5);
+        }
+        assertTrue(condition.getAsBoolean(), "condition was not met before timeout");
     }
 
     private static final class RecordingSink implements AgentEventSink {

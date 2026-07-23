@@ -9,6 +9,7 @@ import minicode.session.service.SessionService;
 import minicode.session.store.SessionMetadata;
 import minicode.session.store.SessionStore;
 import minicode.tui.ConsolePermissionPromptHandler;
+import minicode.tui.ConsoleInputCoordinator;
 import minicode.tui.MiniTui;
 import minicode.tui.MiniTuiEventSink;
 import minicode.tui.RendererTuiBridge;
@@ -314,10 +315,15 @@ public final class MiniCodeApp {
         // 尝试创建 JLine terminal；失败时 terminal 为 null，后续退回 MiniTui。
         Terminal terminal = createTerminal(input, output, err);
 
+        // 普通 line mode 由单一读取线程分流聊天输入和后台权限输入，避免两个消费者竞争 reader。
+        ConsoleInputCoordinator consoleInput = terminal == null
+                ? new ConsoleInputCoordinator(reader)
+                : null;
+
         // RendererTuiBridge 同时承担事件展示和权限弹窗；普通模式则使用 ConsolePermissionPromptHandler。
         RendererTuiBridge rendererBridge = terminal == null ? null : new RendererTuiBridge();
         PermissionPromptHandler permissionPromptHandler = rendererBridge == null
-                ? new ConsolePermissionPromptHandler(reader, output)
+                ? new ConsolePermissionPromptHandler(consoleInput, output)
                 : rendererBridge;
 
         // 创建应用服务集合：工具注册、模型适配器、权限服务、上下文管理、session runner 都在里面装配。
@@ -337,7 +343,7 @@ public final class MiniCodeApp {
         try {
             // 没有 JLine 终端，走普通 line mode 输入链路：readLine -> UserMessage -> AgentLoop。
             if (terminal == null) {
-                new MiniTui(services, reader, output,
+                new MiniTui(services, consoleInput, output,
                         effectiveMaxSteps(java.util.Optional.ofNullable(appArgs.maxStepsOverride()),
                                 services.runtimeConfig())).runLoop();
             } else {

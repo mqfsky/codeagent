@@ -98,8 +98,6 @@ public final class OpenAIModelAdapter implements ForkableModelAdapter {
                 result.add(makeMessage("system", sm.content()));
             } else if (msg instanceof UserMessage um) {
                 result.add(makeMessage("user", um.content()));
-            } else if (msg instanceof AgentNotificationMessage notification) {
-                result.add(makeMessage("user", notification.toModelText()));
             } else if (msg instanceof ContextSummaryMessage csm) {
                 result.add(makeMessage("user", "[Context Summary from earlier conversation]\n" + csm.content()));
             } else if (msg instanceof AssistantThinkingMessage tm) {

@@ -4,6 +4,7 @@ import minicode.agent.model.AgentRunResult;
 import minicode.core.message.AssistantMessage;
 import minicode.core.message.AssistantProgressMessage;
 import minicode.core.message.ChatMessage;
+import minicode.core.message.UserMessage;
 import minicode.core.turn.AgentTurnResult;
 import minicode.core.turn.CancellationDetails;
 import minicode.core.turn.CancellationPhase;
@@ -27,18 +28,43 @@ class AgentRunResultMapperTest {
     private final AgentRunResultMapper mapper = new AgentRunResultMapper();
 
     @Test
-    void mapsFinalAndMaxStepsAsUsableResults() {
+    void mapsFinalAsSuccessAndMaxStepsAsFailure() {
         List<ChatMessage> messages = List.of(
                 new AssistantProgressMessage("progress"), new AssistantMessage("final"));
 
         AgentRunResult finished = mapper.map(AgentTurnResult.finalResult(messages, TurnPersistencePlan.empty()));
         AgentRunResult maxSteps = mapper.map(AgentTurnResult.maxSteps(messages, TurnPersistencePlan.empty()));
 
-        assertEquals("progress\n\nfinal", finished.output());
+        assertEquals("final", finished.output());
         assertEquals("FINAL", finished.stopReason());
         assertTrue(finished.successful());
         assertEquals("MAX_STEPS", maxSteps.stopReason());
-        assertTrue(maxSteps.successful());
+        assertFalse(maxSteps.successful());
+        assertEquals("(agent produced no output)", maxSteps.output());
+        assertEquals(Optional.of("Child agent reached maximum steps"), maxSteps.error());
+    }
+
+    @Test
+    void finalWithoutAssistantMessageIsFailure() {
+        AgentRunResult result = mapper.map(AgentTurnResult.finalResult(
+                List.of(new AssistantProgressMessage("still working")),
+                TurnPersistencePlan.empty()
+        ));
+
+        assertEquals("(agent produced no output)", result.output());
+        assertFalse(result.successful());
+        assertTrue(result.error().orElseThrow().contains("without"));
+    }
+
+    @Test
+    void finalDoesNotReuseHistoricalAssistantText() {
+        AgentRunResult result = mapper.map(AgentTurnResult.finalResult(
+                List.of(new AssistantMessage("I will call a tool"), new UserMessage("tool result")),
+                TurnPersistencePlan.empty()
+        ));
+
+        assertEquals("(agent produced no output)", result.output());
+        assertFalse(result.successful());
     }
 
     @Test

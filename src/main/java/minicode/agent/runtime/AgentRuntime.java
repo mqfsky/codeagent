@@ -53,10 +53,14 @@ public final class AgentRuntime {
         this.resultMapper = Objects.requireNonNull(resultMapper, "resultMapper");
     }
 
+    // 真正执行
     public AgentRunResult run() {
+        // 保证一个 AgentRuntime 实例只能执行一次。
+        // cap 如果是 false 就设置成 true
         if (!started.compareAndSet(false, true)) {
             throw new IllegalStateException("AgentRuntime can only be run once");
         }
+        // 将结果经过映射转换后返回
         return resultMapper.map(agentLoop.runTurn(turnRequest()));
     }
 

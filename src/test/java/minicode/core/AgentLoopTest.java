@@ -13,6 +13,7 @@ import minicode.core.event.AgentEvent;
 import minicode.core.event.AgentEventSink;
 import minicode.core.event.ToolResultsBudgetedEvent;
 import minicode.core.loop.AgentLoop;
+import minicode.core.loop.AssistantCompletionGuard;
 import minicode.core.loop.ModelAdapter;
 import minicode.core.message.*;
 import minicode.core.step.*;
@@ -65,11 +66,27 @@ class AgentLoopTest {
     }
 
     @Test
-    void drainsAgentNotificationsBeforeModelStepAndPersistsThem() {
+    void rejectedCompletionRetriesUseIndependentBudgetAtMaxStepsBoundary() {
+        CountingModelAdapter adapter = new CountingModelAdapter(
+                new AssistantStep("bad completion", AssistantKind.UNSPECIFIED));
+        AssistantCompletionGuard rejectAll = step -> Optional.of("test rejection");
+        AgentLoop loop = new AgentLoop(
+                adapter, AgentEventSink.noOp(), ToolExecutor.unsupported(), rejectAll);
+
+        AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("hi")), 1));
+
+        assertEquals(AgentTurnStopReason.MODEL_ERROR, result.stopReason());
+        assertEquals(3, adapter.calls);
+        assertTrue(((ModelErrorDetails) result.stopDetails().orElseThrow())
+                .error().message().contains("after 3 attempts"));
+    }
+
+    @Test
+    void drainsAgentNotificationsBeforeModelStepWithoutPersistingThem() {
         List<List<ChatMessage>> providerCalls = new ArrayList<>();
         List<String> drainScopes = new ArrayList<>();
-        AgentNotificationMessage notification = new AgentNotificationMessage(
-                "task-7", "COMPLETED", "exploration finished");
+        UserMessage notification = new UserMessage(
+                "<task-notification><task_id>task_7</task_id><result>done</result></task-notification>");
         TurnMessageSource source = (sessionId, turnId) -> {
             drainScopes.add(sessionId + "/" + turnId);
             return List.of(notification);
@@ -88,7 +105,8 @@ class AgentLoopTest {
         assertEquals(notification, result.messages().get(1));
         PersistenceAction.AppendMessagesAction action = assertInstanceOf(
                 PersistenceAction.AppendMessagesAction.class, result.persistencePlan().actions().getFirst());
-        assertEquals(List.of(notification), action.messages());
+        assertEquals(1, action.messages().size());
+        assertInstanceOf(AssistantMessage.class, action.messages().getFirst());
     }
 
     @Test
@@ -106,7 +124,8 @@ class AgentLoopTest {
         AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("hi")), 1));
 
         assertEquals(AgentTurnStopReason.FINAL, result.stopReason());
-        assertTrue(result.messages().stream().noneMatch(AgentNotificationMessage.class::isInstance));
+        assertTrue(result.messages().stream().noneMatch(message ->
+                message instanceof UserMessage user && user.content().contains("<task-notification>")));
         assertEquals("done", assertInstanceOf(AssistantMessage.class, result.messages().getLast()).content());
     }
 

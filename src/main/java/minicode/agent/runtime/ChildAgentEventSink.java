@@ -23,23 +23,21 @@ final class ChildAgentEventSink implements AgentEventSink {
     @Override
     public void onEvent(AgentEvent event) {
         Objects.requireNonNull(event, "event");
+        // Mewcode 的后台任务只回传最终通知，不向父 UI 转发逐工具进度。
+        if (request.runMode() == AgentRunMode.BACKGROUND) {
+            return;
+        }
         switch (event) {
             case AgentEvent.ToolStartedEvent started -> publish(new AgentTaskEvent.ToolStartedEvent(
-                    request.agentId(), eventTaskId(), request.parentTurnId(), request.type(), started.timestamp(),
+                    request.agentId(), Optional.empty(), request.parentTurnId(), request.type(), started.timestamp(),
                     started.toolUseId(), started.toolName()));
             case AgentEvent.ToolFinishedEvent finished -> publish(new AgentTaskEvent.ToolFinishedEvent(
-                    request.agentId(), eventTaskId(), request.parentTurnId(), request.type(), finished.timestamp(),
+                    request.agentId(), Optional.empty(), request.parentTurnId(), request.type(), finished.timestamp(),
                     finished.toolUseId(), finished.toolName(), finished.error()));
             default -> {
                 // 生命周期状态由任务管理器负责，其他核心事件仅保留在子 Agent 内部。
             }
         }
-    }
-
-    private Optional<String> eventTaskId() {
-        return request.runMode() == AgentRunMode.BACKGROUND
-                ? Optional.of(request.taskId())
-                : Optional.empty();
     }
 
     private void publish(AgentTaskEvent event) {

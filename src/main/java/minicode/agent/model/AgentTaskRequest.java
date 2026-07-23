@@ -40,6 +40,13 @@ public record AgentTaskRequest(String taskId,
                 parentSessionId, parentTurnId, cwd, runMode, Instant.now());
     }
 
+    /** 后台任务由进程内任务管理器分配与 Mewcode 一致的 {@code task_N} 标识。 */
+    public AgentTaskRequest withTaskId(String nextTaskId) {
+        String actualTaskId = requireText(nextTaskId, "nextTaskId");
+        return new AgentTaskRequest(actualTaskId, "agent-" + actualTaskId, type, description, prompt,
+                parentSessionId, parentTurnId, cwd, runMode, submittedAt);
+    }
+
     private static String requireText(String value, String name) {
         value = Objects.requireNonNull(value, name);
         if (value.isBlank()) {

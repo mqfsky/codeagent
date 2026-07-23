@@ -1,462 +1,296 @@
 package minicode.agent.task;
 
-import minicode.agent.event.AgentTaskEvent;
-import minicode.agent.event.AgentTaskEventSink;
 import minicode.agent.model.AgentRunMode;
 import minicode.agent.model.AgentRunResult;
 import minicode.agent.model.AgentTaskRequest;
-import minicode.agent.model.AgentTaskSnapshot;
 import minicode.agent.model.AgentTaskStatus;
 import minicode.agent.model.AgentType;
 import minicode.core.turn.CancellationRequestedException;
 import minicode.core.turn.CancellationSource;
 import minicode.core.turn.CancellationToken;
 
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 协调支持持久化、并发限制和取消的后台子 Agent 任务。
+ * 与 Mewcode 对齐的进程内后台子 Agent 管理器。
+ *
+ * <p>任务、结果和通知只保存在内存中。进程退出后不会恢复任务，也不会重投已经取走的通知。</p>
  */
 public final class SubAgentTaskManager implements AutoCloseable {
-    public static final int DEFAULT_MAX_CONCURRENT = 4;
-    public static final int DEFAULT_MAX_QUEUED = 16;
-    public static final Duration DEFAULT_TIMEOUT = Duration.ofMinutes(30);
+    private static final Runnable NO_NOTIFICATION_LISTENER = new NoNotificationListener();
 
-    private final AgentTaskStore store;
+    public record Task(String id,
+                       String name,
+                       AgentType type,
+                       AgentTaskStatus status,
+                       String output,
+                       String error) {
+    }
+
+    public record TaskNotification(String taskId,
+                                   String name,
+                                   AgentType type,
+                                   AgentTaskStatus status,
+                                   String output) {
+    }
+
     private final AgentTaskExecutor taskExecutor;
-    private final AgentTaskEventSink eventSink;
-    private final Clock clock;
-    private final Duration taskTimeout;
-    private final Semaphore executionSlots;
-    private final Semaphore capacity;
-    private final ExecutorService workers;
-    private final ScheduledExecutorService timeoutScheduler;
-    private final ConcurrentMap<String, TaskControl> controls = new ConcurrentHashMap<>();
-    private final AtomicBoolean closed = new AtomicBoolean();
-    private final Object lifecycleLock = new Object();
+    private final Map<String, TaskEntry> tasks = new LinkedHashMap<>();
+    private final List<TaskNotification> notifications = new ArrayList<>();
+    private final AtomicInteger nextId = new AtomicInteger();
 
-    public SubAgentTaskManager(AgentTaskStore store,
-                               AgentInbox inbox,
-                               AgentTaskExecutor taskExecutor) {
-        this(store, inbox, taskExecutor, AgentTaskEventSink.noOp());
-    }
+    private volatile Runnable notificationListener = NO_NOTIFICATION_LISTENER;
+    private boolean closed;
 
-    public SubAgentTaskManager(AgentTaskStore store,
-                               AgentInbox inbox,
-                               AgentTaskExecutor taskExecutor,
-                               AgentTaskEventSink eventSink) {
-        this(store, inbox, taskExecutor, eventSink, Clock.systemUTC(), DEFAULT_TIMEOUT,
-                DEFAULT_MAX_CONCURRENT, DEFAULT_MAX_QUEUED);
-    }
-
-    public SubAgentTaskManager(AgentTaskStore store,
-                               AgentInbox inbox,
-                               AgentTaskExecutor taskExecutor,
-                               AgentTaskEventSink eventSink,
-                               Clock clock,
-                               Duration taskTimeout,
-                               int maxConcurrent,
-                               int maxQueued) {
-        this.store = Objects.requireNonNull(store, "store");
-        Objects.requireNonNull(inbox, "inbox");
+    public SubAgentTaskManager(AgentTaskExecutor taskExecutor) {
         this.taskExecutor = Objects.requireNonNull(taskExecutor, "taskExecutor");
-        this.eventSink = Objects.requireNonNull(eventSink, "eventSink");
-        this.clock = Objects.requireNonNull(clock, "clock");
-        this.taskTimeout = Objects.requireNonNull(taskTimeout, "taskTimeout");
-        if (taskTimeout.isZero() || taskTimeout.isNegative()) {
-            throw new IllegalArgumentException("taskTimeout must be positive");
-        }
-        if (maxConcurrent <= 0) {
-            throw new IllegalArgumentException("maxConcurrent must be positive");
-        }
-        if (maxQueued < 0) {
-            throw new IllegalArgumentException("maxQueued must not be negative");
-        }
-        this.executionSlots = new Semaphore(maxConcurrent, true);
-        this.capacity = new Semaphore(Math.addExact(maxConcurrent, maxQueued), true);
-        this.workers = Executors.newVirtualThreadPerTaskExecutor();
-        this.timeoutScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "sub-agent-timeouts");
-            thread.setDaemon(true);
-            return thread;
-        });
     }
 
-    public AgentTaskSnapshot submit(AgentTaskRequest request) {
+    /** 启动一个后台子 Agent，并立即返回其内存任务视图。 */
+    public Task submit(AgentTaskRequest request) {
         Objects.requireNonNull(request, "request");
         if (request.runMode() != AgentRunMode.BACKGROUND) {
             throw new IllegalArgumentException("SubAgentTaskManager only accepts BACKGROUND tasks");
         }
-        if (request.type() == AgentType.GENERAL_PURPOSE) {
-            throw new IllegalArgumentException("GENERAL_PURPOSE agents cannot run in background");
-        }
 
-        synchronized (lifecycleLock) {
+        TaskEntry entry;
+        synchronized (this) {
             ensureOpen();
-            if (!capacity.tryAcquire()) {
-                throw new AgentTaskRejectedException("Background agent capacity exceeded");
-            }
-            if (store.find(request.taskId(), request.cwd(), request.parentSessionId()).isPresent()) {
-                capacity.release();
-                throw new IllegalArgumentException("Task already exists: " + request.taskId());
-            }
-
-            AgentTaskSnapshot queued = AgentTaskSnapshot.queued(request);
-            TaskControl control = new TaskControl(request, queued);
-            if (controls.putIfAbsent(request.taskId(), control) != null) {
-                capacity.release();
-                throw new IllegalArgumentException("Task already exists: " + request.taskId());
-            }
-
-            try {
-                store.save(queued);
-                publish(new AgentTaskEvent.StateChangedEvent(request.agentId(), Optional.of(request.taskId()),
-                        request.parentTurnId(), request.type(), now(), Optional.empty(), AgentTaskStatus.QUEUED));
-                Future<?> future = workers.submit(() -> run(control));
-                control.future.set(future);
-                if (control.snapshot.get().status().isTerminal()) {
-                    future.cancel(true);
-                }
-                return queued;
-            } catch (RejectedExecutionException exception) {
-                transition(control, AgentTaskStatus.INTERRUPTED, Optional.empty(),
-                        Optional.of("Task manager rejected execution"));
-                controls.remove(request.taskId(), control);
-                releaseCapacity(control);
-                throw new AgentTaskRejectedException("Background task executor is closed");
-            } catch (RuntimeException exception) {
-                controls.remove(request.taskId(), control);
-                releaseCapacity(control);
-                throw exception;
-            }
+            String taskId = "task_" + nextId.incrementAndGet();
+            AgentTaskRequest actualRequest = request.withTaskId(taskId);
+            entry = new TaskEntry(actualRequest, taskName(actualRequest));
+            tasks.put(taskId, entry);
+            entry.thread = Thread.ofVirtual()
+                    .name("sub-agent-" + taskId)
+                    .unstarted(new TaskRunner(this, entry));
+            entry.thread.start();
+            return snapshot(entry);
         }
     }
 
-    public Optional<AgentTaskSnapshot> find(String taskId, String cwd, String parentSessionId) {
-        Objects.requireNonNull(taskId, "taskId");
-        TaskControl active = controls.get(taskId);
-        if (active != null) {
-            AgentTaskSnapshot snapshot = active.snapshot.get();
-            if (snapshot.cwd().equals(cwd) && snapshot.parentSessionId().equals(parentSessionId)) {
-                return Optional.of(snapshot);
-            }
-            return Optional.empty();
-        }
-        return store.find(taskId, cwd, parentSessionId);
+    /** 查询当前管理器内的一项任务。 */
+    public synchronized Task getTask(String taskId) {
+        TaskEntry entry = tasks.get(Objects.requireNonNull(taskId, "taskId"));
+        return entry == null ? null : snapshot(entry);
     }
 
-    public List<AgentTaskSnapshot> list(String cwd, String parentSessionId, int limit) {
-        return store.list(cwd, parentSessionId, limit);
-    }
-
-    public List<AgentTaskSnapshot> recover(String cwd, String parentSessionId) {
-        List<AgentTaskSnapshot> recovered = store.recover(cwd, parentSessionId, now());
-        publishRecovered(recovered);
-        return recovered;
+    /** 返回当前进程创建的全部后台任务。 */
+    public synchronized List<Task> listTasks() {
+        return tasks.values().stream().map(SubAgentTaskManager::snapshot).toList();
     }
 
     /**
-     * 恢复磁盘上的所有遗留任务，但只为当前作用域发布生命周期事件。
-     * 这样既能完整执行启动清理，又不会把其他 Session 泄漏到当前 Renderer。
+     * 取消当前实例中正在运行的任务。
+     *
+     * <p>该方法不访问磁盘，也不能取消其他 CodeAgent 进程拥有的任务。</p>
      */
-    public void recoverPersistedTasks(String eventCwd, String eventParentSessionId) {
-        List<AgentTaskSnapshot> recovered = store.recoverAll(now());
-        publishRecovered(recovered.stream()
-                .filter(snapshot -> snapshot.cwd().equals(eventCwd)
-                        && snapshot.parentSessionId().equals(eventParentSessionId))
-                .toList());
-    }
-
-    private void publishRecovered(List<AgentTaskSnapshot> recovered) {
-        for (AgentTaskSnapshot snapshot : recovered) {
-            AgentTaskStatus previous = snapshot.startedAt().isPresent()
-                    ? AgentTaskStatus.RUNNING
-                    : AgentTaskStatus.QUEUED;
-            publishState(snapshot, Optional.of(previous));
+    public void cancelTask(String taskId) {
+        Thread thread;
+        Runnable listener;
+        synchronized (this) {
+            TaskEntry entry = tasks.get(Objects.requireNonNull(taskId, "taskId"));
+            if (entry == null || entry.status != AgentTaskStatus.RUNNING) {
+                return;
+            }
+            entry.status = AgentTaskStatus.CANCELLED;
+            entry.error = "Cancelled";
+            entry.cancellationToken.requestCancellation(CancellationSource.USER, "Cancelled by parent agent");
+            notifications.add(new TaskNotification(entry.request.taskId(), entry.name, entry.request.type(),
+                    AgentTaskStatus.CANCELLED, ""));
+            thread = entry.thread;
+            listener = notificationListener;
         }
-    }
-
-    public CancelResult cancel(String taskId,
-                               String cwd,
-                               String parentSessionId,
-                               String reason) {
-        Objects.requireNonNull(taskId, "taskId");
-        reason = requireText(reason, "reason");
-        synchronized (lifecycleLock) {
-            TaskControl control = controls.get(taskId);
-            if (control == null) {
-                Optional<AgentTaskSnapshot> stored = store.find(taskId, cwd, parentSessionId);
-                if (stored.isEmpty()) {
-                    throw new IllegalArgumentException("Task not found");
-                }
-                AgentTaskSnapshot snapshot = stored.orElseThrow();
-                if (snapshot.status().isTerminal()) {
-                    return new CancelResult(snapshot, false);
-                }
-                // 没有本地控制句柄的非终态快照可能属于其他存活进程。
-                // v1 不支持跨进程取消，因此绝不能覆盖该任务的生命周期。
-                throw new IllegalArgumentException("Task not found");
-            }
-
-            AgentTaskSnapshot scoped = control.snapshot.get();
-            if (!scoped.cwd().equals(cwd) || !scoped.parentSessionId().equals(parentSessionId)) {
-                throw new IllegalArgumentException("Task not found");
-            }
-            Optional<AgentTaskSnapshot> changed = transition(control, AgentTaskStatus.CANCELLED,
-                    scoped.output(), Optional.of(reason));
-            if (changed.isPresent()) {
-                signalCancellation(control, CancellationSource.USER, reason);
-                controls.remove(taskId, control);
-                releaseCapacity(control);
-            }
-            AgentTaskSnapshot latest = changed.orElseGet(() -> control.snapshot.get());
-            return new CancelResult(latest, changed.isPresent());
+        if (thread != null) {
+            thread.interrupt();
         }
+        notifyListener(listener);
     }
 
-    public CancelResult cancel(String taskId, String cwd, String parentSessionId) {
-        return cancel(taskId, cwd, parentSessionId, "Cancelled by parent agent");
+    /** 取走当前所有通知；读取完成后内存列表立即清空。 */
+    public synchronized List<TaskNotification> drainNotifications() {
+        List<TaskNotification> result = List.copyOf(notifications);
+        notifications.clear();
+        return result;
+    }
+
+    public synchronized boolean hasNotifications() {
+        return !closed && !notifications.isEmpty();
+    }
+
+    /** 注册通知到达回调；Renderer 用它在父 Agent 空闲时自动继续执行。 */
+    public void setNotificationListener(Runnable listener) {
+        Runnable actualListener = Objects.requireNonNull(listener, "listener");
+        boolean notifyNow;
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            notificationListener = actualListener;
+            notifyNow = !notifications.isEmpty();
+        }
+        if (notifyNow) {
+            notifyListener(actualListener);
+        }
     }
 
     @Override
     public void close() {
-        RuntimeException persistenceFailure = null;
-        synchronized (lifecycleLock) {
-            if (!closed.compareAndSet(false, true)) {
+        List<Thread> threads = new ArrayList<>();
+        synchronized (this) {
+            if (closed) {
                 return;
             }
-            for (TaskControl control : List.copyOf(controls.values())) {
-                String reason = "Task manager is shutting down";
-                try {
-                    transition(control, AgentTaskStatus.INTERRUPTED,
-                            control.snapshot.get().output(), Optional.of(reason));
-                } catch (RuntimeException exception) {
-                    if (persistenceFailure == null) {
-                        persistenceFailure = exception;
-                    } else {
-                        persistenceFailure.addSuppressed(exception);
+            closed = true;
+            notificationListener = NO_NOTIFICATION_LISTENER;
+            for (TaskEntry entry : tasks.values()) {
+                if (entry.status == AgentTaskStatus.PENDING || entry.status == AgentTaskStatus.RUNNING) {
+                    entry.status = AgentTaskStatus.CANCELLED;
+                    entry.error = "Task manager closed";
+                    entry.cancellationToken.requestCancellation(CancellationSource.SYSTEM,
+                            "Task manager closed");
+                    if (entry.thread != null) {
+                        threads.add(entry.thread);
                     }
-                } finally {
-                    // 持久化失败时，也不能让子 Agent 在 MCP 关闭期间继续执行。
-                    signalCancellation(control, CancellationSource.SYSTEM, reason);
-                    controls.remove(control.request.taskId(), control);
-                    releaseCapacity(control);
                 }
             }
-            timeoutScheduler.shutdownNow();
-            workers.shutdownNow();
         }
-        if (!awaitTermination(timeoutScheduler, Duration.ofSeconds(1))) {
-            persistenceFailure = appendFailure(persistenceFailure,
-                    new IllegalStateException("Task timeout scheduler did not terminate"));
-        }
-        if (!awaitTermination(workers, Duration.ofSeconds(5))) {
-            persistenceFailure = appendFailure(persistenceFailure,
-                    new IllegalStateException("Background agent workers did not terminate"));
-        }
-        if (persistenceFailure != null) {
-            throw persistenceFailure;
-        }
+        threads.forEach(Thread::interrupt);
     }
 
-    private void run(TaskControl control) {
-        boolean acquiredExecutionSlot = false;
-        try {
-            control.runner.set(Thread.currentThread());
-            executionSlots.acquire();
-            acquiredExecutionSlot = true;
-            if (control.snapshot.get().status().isTerminal()) {
+    private void run(TaskEntry entry) {
+        synchronized (this) {
+            if (closed || entry.status != AgentTaskStatus.PENDING) {
                 return;
             }
-            if (control.cancellationToken.isCancellationRequested()) {
-                transition(control, AgentTaskStatus.CANCELLED, Optional.empty(),
-                        Optional.of("Task was cancelled before execution"));
-                return;
-            }
-            if (transition(control, AgentTaskStatus.RUNNING, Optional.empty(), Optional.empty()).isEmpty()) {
-                return;
-            }
-            control.timeoutFuture.set(timeoutScheduler.schedule(() -> timeOut(control),
-                    taskTimeout.toMillis(), TimeUnit.MILLISECONDS));
+            entry.status = AgentTaskStatus.RUNNING;
+        }
 
+        try {
             AgentRunResult result = Objects.requireNonNull(
-                    taskExecutor.execute(control.request, control.cancellationToken),
+                    taskExecutor.execute(entry.request, entry.cancellationToken),
                     "taskExecutor result");
             if (result.cancelled()) {
-                transition(control, AgentTaskStatus.CANCELLED, optionalOutput(result.output()),
-                        result.error().or(() -> Optional.of("Child agent was cancelled")));
+                finish(entry, AgentTaskStatus.CANCELLED, result.output(),
+                        result.error().orElse("Child agent was cancelled"));
             } else if (result.error().isPresent()) {
-                transition(control, AgentTaskStatus.FAILED, optionalOutput(result.output()), result.error());
+                finish(entry, AgentTaskStatus.FAILED, result.output(), result.error().orElseThrow());
             } else {
-                transition(control, AgentTaskStatus.COMPLETED, optionalOutput(result.output()), Optional.empty());
+                String output = result.output().isEmpty() ? "(agent produced no output)" : result.output();
+                finish(entry, AgentTaskStatus.COMPLETED, output, null);
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            if (!control.snapshot.get().status().isTerminal()) {
-                AgentTaskStatus status = control.cancellationToken.isCancellationRequested()
-                        ? AgentTaskStatus.CANCELLED
-                        : AgentTaskStatus.INTERRUPTED;
-                transition(control, status, control.snapshot.get().output(),
-                        Optional.of(exceptionMessage(exception, "Task thread was interrupted")));
-            }
+            finish(entry, AgentTaskStatus.FAILED, "", "Interrupted");
         } catch (CancellationRequestedException | CancellationException exception) {
-            transition(control, AgentTaskStatus.CANCELLED, control.snapshot.get().output(),
-                    Optional.of(exceptionMessage(exception, "Task was cancelled")));
+            finish(entry, AgentTaskStatus.CANCELLED, "", message(exception, "Cancelled"));
         } catch (Throwable throwable) {
-            if (!control.snapshot.get().status().isTerminal()) {
-                transition(control, AgentTaskStatus.FAILED, control.snapshot.get().output(),
-                        Optional.of(exceptionMessage(throwable, throwable.getClass().getSimpleName())));
-            }
-        } finally {
-            ScheduledFuture<?> timeout = control.timeoutFuture.getAndSet(null);
-            if (timeout != null) {
-                timeout.cancel(false);
-            }
-            control.runner.set(null);
-            if (acquiredExecutionSlot) {
-                executionSlots.release();
-            }
-            releaseCapacity(control);
-            if (control.snapshot.get().status().isTerminal()) {
-                controls.remove(control.request.taskId(), control);
-            }
+            finish(entry, AgentTaskStatus.FAILED, "", message(throwable, throwable.getClass().getSimpleName()));
         }
     }
 
-    private void timeOut(TaskControl control) {
-        String reason = "Background agent exceeded " + taskTimeout;
-        Optional<AgentTaskSnapshot> changed = transition(control, AgentTaskStatus.TIMED_OUT,
-                control.snapshot.get().output(), Optional.of(reason));
-        if (changed.isPresent()) {
-            signalCancellation(control, CancellationSource.SYSTEM, reason);
-        }
-    }
-
-    private Optional<AgentTaskSnapshot> transition(TaskControl control,
-                                                   AgentTaskStatus target,
-                                                   Optional<String> output,
-                                                   Optional<String> error) {
-        synchronized (control.transitionLock) {
-            AgentTaskSnapshot previous = control.snapshot.get();
-            if (!previous.status().canTransitionTo(target)) {
-                return Optional.empty();
+    private void finish(TaskEntry entry, AgentTaskStatus status, String output, String error) {
+        Runnable listener;
+        synchronized (this) {
+            // 取消操作可能先一步进入终态，工作线程不得再覆盖结果。
+            if (entry.status.isTerminal()) {
+                return;
             }
-            AgentTaskSnapshot next = previous.transitionTo(target, now(), output, error);
-            store.save(next);
-            if (!control.snapshot.compareAndSet(previous, next)) {
-                throw new IllegalStateException("Task state changed while holding its transition lock");
-            }
-            publishState(next, Optional.of(previous.status()));
-            return Optional.of(next);
+            entry.status = status;
+            entry.output = output == null ? "" : output;
+            entry.error = error;
+            String notificationOutput = status == AgentTaskStatus.FAILED
+                    ? messageText(error, "Agent failed")
+                    : entry.output;
+            notifications.add(new TaskNotification(entry.request.taskId(), entry.name, entry.request.type(),
+                    status, notificationOutput));
+            listener = notificationListener;
         }
+        notifyListener(listener);
     }
 
-    private static void signalCancellation(TaskControl control, CancellationSource source, String reason) {
-        control.cancellationToken.requestCancellation(source, reason);
-        Future<?> future = control.future.get();
-        if (future != null) {
-            future.cancel(true);
-        }
-        Thread runner = control.runner.get();
-        if (runner != null) {
-            runner.interrupt();
-        }
+    private static Task snapshot(TaskEntry entry) {
+        return new Task(entry.request.taskId(), entry.name, entry.request.type(), entry.status,
+                entry.output, entry.error);
     }
 
-    private static boolean awaitTermination(ExecutorService executor, Duration timeout) {
+    private static String taskName(AgentTaskRequest request) {
+        return externalType(request.type()) + ": " + truncate(request.prompt(), 50);
+    }
+
+    private static String externalType(AgentType type) {
+        return switch (type) {
+            case EXPLORE -> "explore";
+            case PLAN -> "plan";
+            case GENERAL_PURPOSE -> "general-purpose";
+        };
+    }
+
+    private static String truncate(String value, int maxChars) {
+        return value.length() <= maxChars ? value : value.substring(0, maxChars) + "...";
+    }
+
+    private static String message(Throwable throwable, String fallback) {
+        return messageText(throwable.getMessage(), fallback);
+    }
+
+    private static String messageText(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static void notifyListener(Runnable listener) {
         try {
-            return executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            return executor.isTerminated();
-        }
-    }
-
-    private static RuntimeException appendFailure(RuntimeException current, RuntimeException next) {
-        if (current == null) {
-            return next;
-        }
-        current.addSuppressed(next);
-        return current;
-    }
-
-    private void publishState(AgentTaskSnapshot snapshot, Optional<AgentTaskStatus> previous) {
-        publish(new AgentTaskEvent.StateChangedEvent(snapshot.agentId(), Optional.of(snapshot.taskId()),
-                snapshot.parentTurnId(), snapshot.type(), now(), previous, snapshot.status()));
-    }
-
-    private void publish(AgentTaskEvent event) {
-        try {
-            eventSink.onEvent(event);
+            listener.run();
         } catch (RuntimeException ignored) {
-            // 可观测性逻辑绝不能改变任务生命周期语义。
+            // 通知回调只用于唤醒父 Agent，不能改变子任务终态。
         }
     }
 
-    private void releaseCapacity(TaskControl control) {
-        if (control.capacityReleased.compareAndSet(false, true)) {
-            capacity.release();
+    private synchronized void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("Sub-agent task manager is closed");
         }
     }
 
-    private Instant now() {
-        return clock.instant();
-    }
-
-    private void ensureOpen() {
-        if (closed.get()) {
-            throw new AgentTaskRejectedException("Task manager is closed");
-        }
-    }
-
-    private static Optional<String> optionalOutput(String output) {
-        return output.isEmpty() ? Optional.empty() : Optional.of(output);
-    }
-
-    private static String exceptionMessage(Throwable throwable, String fallback) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank() ? fallback : message;
-    }
-
-    private static String requireText(String value, String name) {
-        value = Objects.requireNonNull(value, name);
-        if (value.isBlank()) {
-            throw new IllegalArgumentException(name + " must not be blank");
-        }
-        return value;
-    }
-
-    private static final class TaskControl {
+    private static final class TaskEntry {
         private final AgentTaskRequest request;
+        private final String name;
         private final CancellationToken cancellationToken = CancellationToken.create();
-        private final AtomicReference<AgentTaskSnapshot> snapshot;
-        private final AtomicReference<Future<?>> future = new AtomicReference<>();
-        private final AtomicReference<Thread> runner = new AtomicReference<>();
-        private final AtomicReference<ScheduledFuture<?>> timeoutFuture = new AtomicReference<>();
-        private final AtomicBoolean capacityReleased = new AtomicBoolean();
-        private final Object transitionLock = new Object();
+        private AgentTaskStatus status = AgentTaskStatus.PENDING;
+        private String output = "";
+        private String error;
+        private Thread thread;
 
-        private TaskControl(AgentTaskRequest request, AgentTaskSnapshot snapshot) {
+        private TaskEntry(AgentTaskRequest request, String name) {
             this.request = request;
-            this.snapshot = new AtomicReference<>(snapshot);
+            this.name = name;
+        }
+    }
+
+    private static final class TaskRunner implements Runnable {
+        private final SubAgentTaskManager taskManager;
+        private final TaskEntry entry;
+
+        private TaskRunner(SubAgentTaskManager taskManager, TaskEntry entry) {
+            this.taskManager = Objects.requireNonNull(taskManager, "taskManager");
+            this.entry = Objects.requireNonNull(entry, "entry");
+        }
+
+        @Override
+        public void run() {
+            taskManager.run(entry);
+        }
+    }
+
+    private static final class NoNotificationListener implements Runnable {
+        @Override
+        public void run() {
+            // No listener has been registered yet, or the manager has already closed.
         }
     }
 }

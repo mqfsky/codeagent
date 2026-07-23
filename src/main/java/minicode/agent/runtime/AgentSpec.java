@@ -33,10 +33,10 @@ public record AgentSpec(
             """
                     Explore the repository efficiently and report concrete evidence.
                     Locate relevant files, definitions, references, and execution paths.
-                    Stay read-only. Do not create, edit, move, or delete files and do not run commands.
+                    Stay read-only. Commands may only inspect data; never use them to mutate files or repository state.
                     Return a concise answer with exact file paths and the most important findings.
                     """.strip(),
-            Set.of(ToolCapability.READ),
+            Set.of(ToolCapability.READ, ToolCapability.COMMAND),
             30,
             true
     );
@@ -47,11 +47,11 @@ public record AgentSpec(
             """
                     Act as a software architect and implementation planner.
                     Inspect the repository before proposing changes and follow its existing design patterns.
-                    Stay read-only. Do not create, edit, move, or delete files and do not run commands.
+                    Stay read-only. Commands may only inspect data; never use them to mutate files or repository state.
                     Produce an ordered, implementation-ready plan with dependencies, risks, verification, and critical files.
                     """.strip(),
-            Set.of(ToolCapability.READ),
-            20,
+            Set.of(ToolCapability.READ, ToolCapability.COMMAND),
+            15,
             true
     );
 
@@ -65,8 +65,8 @@ public record AgentSpec(
                     Report the completed outcome, verification performed, and any remaining limitation.
                     """.strip(),
             Set.of(ToolCapability.READ, ToolCapability.WRITE, ToolCapability.COMMAND),
-            32,
-            false
+            200,
+            true
     );
 
     private static final Map<AgentType, AgentSpec> BUILT_INS = builtInsByType();
@@ -84,7 +84,7 @@ public record AgentSpec(
         }
     }
 
-    /** 返回指定角色的固定 v1 规范。 */
+    /** 返回与 Mewcode 内置角色对齐的固定规范。 */
     public static AgentSpec forType(AgentType type) {
         AgentSpec spec = BUILT_INS.get(Objects.requireNonNull(type, "type"));
         if (spec == null) {
@@ -93,7 +93,7 @@ public record AgentSpec(
         return spec;
     }
 
-    /** 返回按类型索引的三个固定 v1 角色规范。 */
+    /** 返回按类型索引的三个固定角色规范。 */
     public static Map<AgentType, AgentSpec> builtIns() {
         return BUILT_INS;
     }

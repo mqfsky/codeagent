@@ -33,6 +33,7 @@ public final class SubAgentPromptBuilder {
         return build(new Input(cwd, spec, runMode, tools));
     }
 
+    // 构建子 agent prompt
     public String build(Input input) {
         Input actual = Objects.requireNonNull(input, "input");
         StringJoiner prompt = new StringJoiner("\n\n");
@@ -54,7 +55,7 @@ public final class SubAgentPromptBuilder {
 
     private static String commonBoundaries(AgentRunMode runMode) {
         String modeBoundary = runMode == AgentRunMode.BACKGROUND
-                ? "This is a background read-only run. Never request interactive permission or user input."
+                ? "This is a background delegated run. Complete it independently with the tools exposed below."
                 : "This is a synchronous delegated run. Use only tools exposed below.";
         return """
                 Child-agent boundaries:

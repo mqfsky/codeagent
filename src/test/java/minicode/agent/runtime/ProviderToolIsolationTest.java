@@ -43,7 +43,6 @@ class ProviderToolIsolationTest {
         parent.register(tool("run_command", ToolOrigin.BUILTIN, ToolCapability.COMMAND));
         parent.register(tool("ask_user", ToolOrigin.BUILTIN, ToolCapability.ASK_USER));
         parent.register(tool("agent", ToolOrigin.BUILTIN, ToolCapability.BACKGROUND_TASK));
-        parent.register(tool("task_output", ToolOrigin.BUILTIN, ToolCapability.BACKGROUND_TASK));
         parent.register(tool("mcp__server__tool", ToolOrigin.MCP, ToolCapability.COMMAND));
         ToolRegistry child = new ChildToolRegistryFactory().create(
                 parent, AgentSpec.forType(AgentType.EXPLORE), AgentRunMode.BACKGROUND);
@@ -53,7 +52,7 @@ class ProviderToolIsolationTest {
         Method buildTools = OpenAIModelAdapter.class.getDeclaredMethod("buildTools");
         buildTools.setAccessible(true);
         JsonNode openAiTools = (JsonNode) buildTools.invoke(openAi);
-        assertEquals(List.of("read_file"), StreamSupport.stream(openAiTools.spliterator(), false)
+        assertEquals(List.of("read_file", "run_command", "mcp__server__tool"), StreamSupport.stream(openAiTools.spliterator(), false)
                 .map(node -> node.at("/function/name").asText()).toList());
 
         AtomicReference<JsonNode> anthropicBody = new AtomicReference<>();
@@ -65,7 +64,7 @@ class ProviderToolIsolationTest {
         AnthropicModelAdapter anthropic = (AnthropicModelAdapter) new AnthropicModelAdapter(
                 config(ProviderKind.ANTHROPIC), parent, transport).fork(child);
         anthropic.next(List.of(new UserMessage("inspect")));
-        assertEquals(List.of("read_file"), StreamSupport.stream(
+        assertEquals(List.of("read_file", "run_command", "mcp__server__tool"), StreamSupport.stream(
                         anthropicBody.get().get("tools").spliterator(), false)
                 .map(node -> node.get("name").asText()).toList());
 

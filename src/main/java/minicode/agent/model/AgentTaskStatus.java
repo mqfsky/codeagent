@@ -3,18 +3,16 @@ package minicode.agent.model;
 import java.util.EnumSet;
 import java.util.Set;
 
-/** 单个后台 Agent 任务的持久化生命周期状态。 */
+/** 单个后台子 Agent 在当前进程内的生命周期状态。 */
 public enum AgentTaskStatus {
-    QUEUED,
+    PENDING,
     RUNNING,
     COMPLETED,
     FAILED,
-    CANCELLED,
-    TIMED_OUT,
-    INTERRUPTED;
+    CANCELLED;
 
     private static final Set<AgentTaskStatus> TERMINAL = EnumSet.of(
-            COMPLETED, FAILED, CANCELLED, TIMED_OUT, INTERRUPTED);
+            COMPLETED, FAILED, CANCELLED);
 
     public boolean isTerminal() {
         return TERMINAL.contains(this);
@@ -25,9 +23,9 @@ public enum AgentTaskStatus {
             return false;
         }
         return switch (this) {
-            case QUEUED -> target == RUNNING || target == CANCELLED || target == INTERRUPTED;
+            case PENDING -> target == RUNNING || target == CANCELLED;
             case RUNNING -> target.isTerminal();
-            case COMPLETED, FAILED, CANCELLED, TIMED_OUT, INTERRUPTED -> false;
+            case COMPLETED, FAILED, CANCELLED -> false;
         };
     }
 }

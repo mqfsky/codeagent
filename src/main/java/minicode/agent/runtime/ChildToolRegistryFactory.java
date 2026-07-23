@@ -15,18 +15,19 @@ import java.util.Set;
 /** 为一次子 Agent 运行构建隔离且经过策略过滤的工具注册表。 */
 public final class ChildToolRegistryFactory {
     private static final Set<String> ALWAYS_BLOCKED_NAMES = Set.of("agent", "ask_user");
-    private static final Set<ToolCapability> BACKGROUND_CAPABILITIES = Set.of(ToolCapability.READ);
 
     public ToolRegistry create(ToolRegistry parentRegistry, AgentSpec spec, AgentRunMode runMode) {
         ToolRegistry source = Objects.requireNonNull(parentRegistry, "parentRegistry");
         AgentSpec actualSpec = Objects.requireNonNull(spec, "spec");
         AgentRunMode actualMode = Objects.requireNonNull(runMode, "runMode");
+
         if (!actualSpec.supports(actualMode)) {
             throw new IllegalArgumentException(
                     "Agent type " + actualSpec.type() + " does not support background execution");
         }
 
         ToolRegistry child = new ToolRegistry();
+        // 载入子 agent 能够使用的工具
         source.list().stream()
                 .filter(tool -> allowed(tool, actualSpec, actualMode))
                 .forEach(child::register);
@@ -46,14 +47,12 @@ public final class ChildToolRegistryFactory {
                 || metadata.capabilities().contains(ToolCapability.BACKGROUND_TASK)) {
             return false;
         }
-        if (runMode == AgentRunMode.BACKGROUND && metadata.origin() == ToolOrigin.MCP) {
-            return false;
+        // Mewcode 会让 MCP 工具直接通过角色过滤；具体调用仍经过工具自身的权限链。
+        if (metadata.origin() == ToolOrigin.MCP) {
+            return true;
         }
 
-        Set<ToolCapability> allowedCapabilities = runMode == AgentRunMode.BACKGROUND
-                ? BACKGROUND_CAPABILITIES
-                : spec.allowedCapabilities();
         return !metadata.capabilities().isEmpty()
-                && allowedCapabilities.containsAll(metadata.capabilities());
+                && spec.allowedCapabilities().containsAll(metadata.capabilities());
     }
 }

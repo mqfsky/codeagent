@@ -16,11 +16,10 @@ package minicode.core.message;
  *     <li>{@link AssistantThinkingMessage}：provider 返回的 thinking block，用来单独保存模型思考块。</li>
  *     <li>{@link AssistantToolCallMessage}：模型发起的工具调用，记录工具名、调用 id 和输入参数。</li>
  *     <li>{@link ToolResultMessage}：工具执行后的结果，通过 tool use id 回填给模型继续推理。</li>
- *     <li>{@link AgentNotificationMessage}：后台 Agent 任务完成或状态变化后注入当前 turn 的通知。</li>
  *     <li>{@link ContextSummaryMessage}：上下文压缩后的摘要，用来替代被压缩掉的历史消息。</li>
  * </ul>
  */
 public sealed interface ChatMessage permits SystemMessage, UserMessage, AssistantThinkingMessage,
         AssistantMessage, AssistantProgressMessage, AssistantToolCallMessage, ToolResultMessage,
-        AgentNotificationMessage, ContextSummaryMessage {
+        ContextSummaryMessage {
 }

@@ -119,7 +119,6 @@ public final class TokenAccountingService {
             chars += switch (message) {
                 case SystemMessage system -> system.content().length();
                 case UserMessage user -> user.content().length();
-                case AgentNotificationMessage notification -> notification.toModelText().length();
                 case AssistantMessage assistant -> assistant.content().length();
                 case AssistantProgressMessage progress -> progress.content().length();
                 case ToolResultMessage toolResult -> toolResult.content().length();

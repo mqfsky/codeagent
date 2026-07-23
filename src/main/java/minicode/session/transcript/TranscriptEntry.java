@@ -23,7 +23,6 @@ public record TranscriptEntry(Kind kind, String body, Optional<String> toolName,
         USER,
         ASSISTANT,
         PROGRESS,
-        NOTIFICATION,
         TOOL,
         COMPACT
     }

@@ -49,7 +49,12 @@ public final class AgentLoop {
             "Your previous response hit max_tokens during thinking before producing the next actionable step. Resume immediately and continue with the next concrete tool call, code change, or an explicit <final> answer only if the task is complete. Do not repeat the earlier plan.";
     private static final String PAUSE_TURN_THINKING_CONTINUATION_PROMPT =
             "Resume from the previous pause_turn and continue the task immediately. Produce the next concrete tool call, code change, or an explicit <final> answer only if the task is complete.";
+    private static final String REJECTED_COMPLETION_CONTINUATION_PROMPT =
+            "The previous response was rejected because %s. If more work is needed, use a real tool call. " +
+            "Otherwise, stop planning and return the completed answer inside <final>...</final>.";
     private static final int MODEL_REQUEST_ATTEMPTS = 3;
+    private static final int MAX_REJECTED_COMPLETION_RETRIES = 2;
+    private static final int REJECTED_COMPLETION_EXCERPT_CHARS = 4_000;
 
     private final ModelAdapter modelAdapter;
     private final AgentEventSink eventSink;
@@ -58,6 +63,7 @@ public final class AgentLoop {
     private final ContextStatsCalculator contextStatsCalculator;
     private final AutoCompactController autoCompactController;
     private final TurnMessageSource turnMessageSource;
+    private final AssistantCompletionGuard completionGuard;
     private final int maxEmptyResponseRetries;
 
     public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink) {
@@ -70,6 +76,12 @@ public final class AgentLoop {
 
     public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor) {
         this(modelAdapter, eventSink, toolExecutor, 2);
+    }
+
+    public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
+                     AssistantCompletionGuard completionGuard) {
+        this(modelAdapter, eventSink, toolExecutor, ContextManager.noOp(), defaultContextStatsCalculator(),
+                AutoCompactController.disabled(), 2, TurnMessageSource.noOp(), completionGuard);
     }
 
     public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
@@ -115,6 +127,13 @@ public final class AgentLoop {
 
     public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
                      ContextManager contextManager, ContextStatsCalculator contextStatsCalculator,
+                     AutoCompactController autoCompactController, AssistantCompletionGuard completionGuard) {
+        this(modelAdapter, eventSink, toolExecutor, contextManager, contextStatsCalculator,
+                autoCompactController, 2, TurnMessageSource.noOp(), completionGuard);
+    }
+
+    public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
+                     ContextManager contextManager, ContextStatsCalculator contextStatsCalculator,
                      AutoCompactController autoCompactController, TurnMessageSource turnMessageSource) {
         this(modelAdapter, eventSink, toolExecutor, contextManager, contextStatsCalculator,
                 autoCompactController, 2, turnMessageSource);
@@ -132,6 +151,16 @@ public final class AgentLoop {
                      ContextManager contextManager, ContextStatsCalculator contextStatsCalculator,
                      AutoCompactController autoCompactController,
                      int maxEmptyResponseRetries, TurnMessageSource turnMessageSource) {
+        this(modelAdapter, eventSink, toolExecutor, contextManager, contextStatsCalculator,
+                autoCompactController, maxEmptyResponseRetries, turnMessageSource,
+                AssistantCompletionGuard.acceptAll());
+    }
+
+    public AgentLoop(ModelAdapter modelAdapter, AgentEventSink eventSink, ToolExecutor toolExecutor,
+                     ContextManager contextManager, ContextStatsCalculator contextStatsCalculator,
+                     AutoCompactController autoCompactController,
+                     int maxEmptyResponseRetries, TurnMessageSource turnMessageSource,
+                     AssistantCompletionGuard completionGuard) {
         this.modelAdapter = Objects.requireNonNull(modelAdapter, "modelAdapter");
         this.eventSink = Objects.requireNonNull(eventSink, "eventSink");
         this.toolExecutor = Objects.requireNonNull(toolExecutor, "toolExecutor");
@@ -139,6 +168,7 @@ public final class AgentLoop {
         this.contextStatsCalculator = Objects.requireNonNull(contextStatsCalculator, "contextStatsCalculator");
         this.autoCompactController = Objects.requireNonNull(autoCompactController, "autoCompactController");
         this.turnMessageSource = Objects.requireNonNull(turnMessageSource, "turnMessageSource");
+        this.completionGuard = Objects.requireNonNull(completionGuard, "completionGuard");
         if (maxEmptyResponseRetries < 0) {
             throw new IllegalArgumentException("maxEmptyResponseRetries must be non-negative");
         }
@@ -158,6 +188,7 @@ public final class AgentLoop {
         int emptyResponseCount = 0;
         // 记录 thinking 被截断后恢复的次数
         int recoverableThinkingRetryCount = 0;
+        int rejectedCompletionCount = 0;
         boolean sawToolResultThisTurn = false;
         int toolErrorCount = 0;
 
@@ -166,9 +197,11 @@ public final class AgentLoop {
             request.cancellationToken().throwIfCancellationRequested(CancellationPhase.BEFORE_TURN);
 
             // 一个 turn 里可以有多个 step：每个 step 最多进行一次模型请求，并可能触发一组工具调用。
-            for (int stepIndex = 0; stepIndex < request.maxSteps(); stepIndex++) {
+            // 被完成质量门拒绝的响应会获得独立、有限的恢复请求，不挤占正常 maxSteps 预算。
+            long stepLimit = request.maxSteps();
+            for (long stepIndex = 0; stepIndex < stepLimit; stepIndex++) {
                 // 后台 Agent 可能在本轮运行期间完成；每个模型 step 前都尝试注入新通知。
-                drainTurnMessages(request.sessionId(), request.turnId(), messages, actions);
+                drainTurnMessages(request.sessionId(), request.turnId(), messages);
 
                 // 1.模型请求前先处理上下文压力：统计 -> microcompact -> 再统计 -> 必要时 autoCompact。
                 // 上下文状态，统计当前 message 占了多少 token，算上下文窗口占用率和警告等级
@@ -217,6 +250,7 @@ public final class AgentLoop {
 
                 // 4.分支一：模型要求调用工具。先把 tool call 写入上下文，再执行工具并收集结果。
                 if (step instanceof ToolCallsStep toolCallsStep) {
+                    rejectedCompletionCount = 0;
                     // 先记录模型说了什么
                     appendToolCallsStepProjection(request.turnId(), messages, actions, toolCallsStep);
                     request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
@@ -359,6 +393,28 @@ public final class AgentLoop {
                 // 7.FINAL/UNSPECIFIED 表示本轮完成；PROGRESS 只是中间进展，需要追加续跑提示继续下一 step。
                 switch (assistantStep.kind()) {
                     case FINAL, UNSPECIFIED -> {
+                        Optional<String> rejectionReason = completionGuard.rejectionReason(assistantStep);
+                        if (rejectionReason.isPresent()) {
+                            rejectedCompletionCount++;
+                            appendAssistantThinkingBlocks(request.turnId(), messages, actions, assistantStep);
+                            appendMessage(request.turnId(), messages, actions, new AssistantProgressMessage(
+                                    rejectedCompletionProjection(assistantStep.content()),
+                                    assistantStep.usage(),
+                                    UsageStaleness.fresh()
+                            ));
+                            request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
+                            if (rejectedCompletionCount <= MAX_REJECTED_COMPLETION_RETRIES) {
+                                stepLimit++;
+                                appendMessage(request.turnId(), messages, actions, new UserMessage(
+                                        REJECTED_COMPLETION_CONTINUATION_PROMPT.formatted(
+                                                rejectionReason.orElseThrow())
+                                ));
+                                request.cancellationToken().throwIfCancellationRequested(CancellationPhase.AFTER_TURN);
+                                continue;
+                            }
+                            return completionRejectedResult(
+                                    messages, actions, rejectedCompletionCount, rejectionReason.orElseThrow());
+                        }
                         appendAssistantThinkingBlocks(request.turnId(), messages, actions, assistantStep);
                         AssistantMessage finalMessage = new AssistantMessage(
                                 assistantStep.content(),
@@ -393,6 +449,38 @@ public final class AgentLoop {
         }
     }
 
+    private static String rejectedCompletionProjection(String content) {
+        if (content.length() <= REJECTED_COMPLETION_EXCERPT_CHARS) {
+            return content;
+        }
+        String marker = "\n...[rejected completion truncated]...\n";
+        int retainedChars = REJECTED_COMPLETION_EXCERPT_CHARS - marker.length();
+        int headChars = retainedChars / 2;
+        int tailChars = retainedChars - headChars;
+        return content.substring(0, headChars)
+                + marker
+                + content.substring(content.length() - tailChars);
+    }
+
+    private AgentTurnResult completionRejectedResult(List<ChatMessage> messages,
+                                                      List<PersistenceAction> actions,
+                                                      int attempts,
+                                                      String reason) {
+        String message = "Model failed to produce a usable final response after %d attempts: %s"
+                .formatted(attempts, reason);
+        return AgentTurnResult.modelError(
+                List.copyOf(messages),
+                new TurnPersistencePlan(actions),
+                new ModelErrorDetails(new TurnError(
+                        message,
+                        TurnErrorSource.MODEL,
+                        true,
+                        Optional.of("completionRejections=" + attempts),
+                        Optional.empty()
+                ))
+        );
+    }
+
     private AgentStep nextWithRetries(List<ChatMessage> messages, CancellationToken cancellationToken) {
         RuntimeException lastException = null;
         for (int attempt = 1; attempt <= MODEL_REQUEST_ATTEMPTS; attempt++) {
@@ -414,18 +502,16 @@ public final class AgentLoop {
         return new ContextStatsCalculator(new TokenAccountingService(), new ModelContextWindow(128_000, 8_000));
     }
 
-    private void drainTurnMessages(String sessionId, String turnId, List<ChatMessage> messages,
-                                   List<PersistenceAction> actions) {
-        List<AgentNotificationMessage> notifications;
+    private void drainTurnMessages(String sessionId, String turnId, List<ChatMessage> messages) {
+        List<ChatMessage> notifications;
         try {
             notifications = List.copyOf(turnMessageSource.drain(sessionId, turnId));
         } catch (RuntimeException ignored) {
             // 收件箱或消息源异常只影响通知观察能力，不能中断当前对话轮次。
             return;
         }
-        for (AgentNotificationMessage notification : notifications) {
-            appendMessage(turnId, messages, actions, notification);
-        }
+        // 与 Mewcode 一致：通知只进入当前内存上下文，不生成 Session 持久化动作。
+        messages.addAll(notifications);
     }
 
     private AutoCompactResult runAutoCompactPreflight(String turnId, List<ChatMessage> messages,

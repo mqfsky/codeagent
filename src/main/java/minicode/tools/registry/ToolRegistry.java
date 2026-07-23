@@ -60,19 +60,19 @@ public final class ToolRegistry implements ToolExecutor {
         } catch (CancellationRequestedException exception) {
             throw exception;
         } catch (RuntimeException exception) {
-            return validationError(tool, List.of(messageOrDefault(exception, "Tool input validation failed")));
+            return ToolResult.error(messageOrDefault(exception, "Tool input validation failed"));
         }
 
         if (validation == null) {
-            return validationError(tool, List.of("validator returned null"));
+            return ToolResult.error("Tool input validation failed: validator returned null");
         }
 
         if (!validation.valid()) {
-            return validationError(tool, validation.errors());
+            return ToolResult.error(formatValidationErrors(actualCall.toolName(), validation));
         }
 
         if (validation.normalizedInput().isEmpty()) {
-            return validationError(tool, List.of("valid result requires normalized input"));
+            return ToolResult.error("Tool input validation failed: valid result requires normalized input");
         }
 
         JsonNode normalizedInput = validation.normalizedInput().get();
@@ -91,23 +91,9 @@ public final class ToolRegistry implements ToolExecutor {
         }
     }
 
-    private static ToolResult validationError(Tool tool, List<String> errors) {
-        if (tool instanceof ToolValidationErrorHandler handler) {
-            try {
-                ToolResult result = handler.validationError(List.copyOf(errors));
-                if (result != null) {
-                    return result;
-                }
-            } catch (RuntimeException ignored) {
-                // 回退到 Registry 向后兼容的纯文本错误响应。
-            }
-        }
-        return ToolResult.error(formatValidationErrors(tool.metadata().name(), errors));
-    }
-
-    private static String formatValidationErrors(String toolName, List<String> errors) {
+    private static String formatValidationErrors(String toolName, ValidationResult validation) {
         StringJoiner joiner = new StringJoiner("; ");
-        errors.forEach(joiner::add);
+        validation.errors().forEach(joiner::add);
         return "Tool input validation failed for " + toolName + ": " + joiner;
     }
 

@@ -1,12 +1,13 @@
 package minicode.tui;
 
-import minicode.agent.event.AgentTaskEvent;
-import minicode.agent.model.AgentTaskStatus;
+import minicode.agent.model.AgentRunMode;
+import minicode.agent.model.AgentTaskRequest;
 import minicode.agent.model.AgentType;
 import minicode.app.ApplicationServices;
 import minicode.core.event.AgentEvent;
 import minicode.core.message.AssistantMessage;
 import minicode.core.message.ChatMessage;
+import minicode.core.message.SystemMessage;
 import minicode.core.message.ToolResultMessage;
 import minicode.core.message.UserMessage;
 import minicode.core.loop.ModelAdapter;
@@ -88,107 +89,113 @@ class RendererTuiShellTest {
     }
 
     @Test
-    void backgroundAgentTaskRendersSeparateBlockWithoutChangingBusyInput() throws Exception {
-        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(90, 14));
+    void completedBackgroundAgentAutomaticallyContinuesIdleParent() throws Exception {
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(80, 12));
         RendererTuiBridge bridge = new RendererTuiBridge();
-        CountDownLatch modelStarted = new CountDownLatch(1);
-        CountDownLatch releaseModel = new CountDownLatch(1);
+        CountDownLatch summarized = new CountDownLatch(1);
+        ModelAdapter adapter = new BackgroundNotificationModelAdapter(
+                summarized, "后台完整结果", "父 Agent 已汇总后台结果", "unused");
         ApplicationServices services = ApplicationServices.create(
-                tempDir.resolve("home"),
-                tempDir.resolve("workspace"),
-                "session-1",
-                messages -> {
-                    modelStarted.countDown();
-                    try {
-                        assertTrue(releaseModel.await(2, TimeUnit.SECONDS));
-                    } catch (InterruptedException exception) {
-                        Thread.currentThread().interrupt();
-                        throw new AssertionError(exception);
-                    }
-                    return new AssistantStep("done", AssistantKind.FINAL);
-                },
+                tempDir.resolve("notification-home"),
+                tempDir.resolve("notification-workspace"),
+                "session-notification",
+                adapter,
                 bridge,
                 bridge
         );
-        RendererTuiShell shell = new RendererTuiShell(
-                services,
-                new BufferedLineInput(new BufferedReader(new StringReader("hello\n"))),
-                screen,
-                MiniTui.DEFAULT_MAX_STEPS,
-                bridge
-        );
-
-        shell.runOnce();
-        assertTrue(modelStarted.await(2, TimeUnit.SECONDS));
         try {
-            bridge.onEvent(new AgentTaskEvent.StateChangedEvent(
-                    "agent-1",
-                    Optional.of("task-1"),
-                    "parent-turn",
+            RendererTuiShell shell = new RendererTuiShell(
+                    services,
+                    new BufferedLineInput(new BufferedReader(new StringReader(""))),
+                    screen,
+                    MiniTui.DEFAULT_MAX_STEPS,
+                    bridge
+            );
+            services.subAgentTaskManager().orElseThrow().submit(AgentTaskRequest.create(
                     AgentType.EXPLORE,
-                    java.time.Instant.EPOCH,
-                    Optional.of(AgentTaskStatus.QUEUED),
-                    AgentTaskStatus.RUNNING
-            ));
+                    "inspect",
+                    "inspect repository",
+                    "session-notification",
+                    "parent-turn",
+                    tempDir.resolve("notification-workspace").toString(),
+                    AgentRunMode.BACKGROUND));
 
-            String latest = screen.latestText();
-            assertTrue(latest.contains("◎ Agent task › [task-1] explore running"), latest);
-            assertTrue(latest.contains("● Thinking..."), latest);
-            assertEquals("…", screen.latestFrame().orElseThrow().lines().getLast().stripTrailing());
-        } finally {
-            releaseModel.countDown();
+            assertTrue(summarized.await(2, TimeUnit.SECONDS));
             shell.awaitIdle(Duration.ofSeconds(2));
+
+            assertTrue(screen.latestText().contains("父 Agent 已汇总后台结果"), screen.latestText());
+            assertTrue(services.sessionMessages().stream()
+                    .anyMatch(message -> message instanceof AssistantMessage assistant
+                            && assistant.content().equals("父 Agent 已汇总后台结果")));
+            assertTrue(services.sessionMessages().stream().noneMatch(message ->
+                    message instanceof UserMessage user && user.content().contains("<task-notification>")));
+        } finally {
+            services.close();
         }
     }
 
     @Test
-    void backgroundAgentTaskDoesNotReplacePendingPermissionState() {
-        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(100, 24));
+    void permissionAnswerAfterParentFinishesDoesNotRestoreStaleBusyState() throws Exception {
+        FakeTerminalScreen screen = new FakeTerminalScreen(new TerminalSize(90, 16));
         RendererTuiBridge bridge = new RendererTuiBridge();
+        CountDownLatch parentStarted = new CountDownLatch(1);
+        CountDownLatch releaseParent = new CountDownLatch(1);
+        CountDownLatch summarized = new CountDownLatch(1);
+        ModelAdapter adapter = new PermissionRaceModelAdapter(parentStarted, releaseParent, summarized);
         ApplicationServices services = ApplicationServices.create(
-                tempDir.resolve("home"),
-                tempDir.resolve("workspace"),
-                "session-1",
-                new MockModelAdapter("unused"),
+                tempDir.resolve("permission-race-home"),
+                tempDir.resolve("permission-race-workspace"),
+                "permission-race-session",
+                adapter,
                 bridge,
-                bridge
-        );
-        RendererTuiShell shell = new RendererTuiShell(
-                services,
-                new ScriptedTuiInput(List.of(TuiInputEvent.submitLine("allow_once"))),
-                screen,
-                MiniTui.DEFAULT_MAX_STEPS,
-                bridge
-        );
-        PermissionRequest request = new PermissionRequest(
-                "permission-1",
-                PermissionRequestKind.PATH,
-                new PermissionResource.PathResource(Path.of("outside.txt"), PathIntent.READ),
-                "Allow file read",
-                Optional.empty()
-        );
-        java.util.concurrent.CompletableFuture<?> prompt = java.util.concurrent.CompletableFuture.runAsync(
-                () -> shell.requestPermission(request));
-        waitUntil(() -> screen.latestText().contains("allow ›"), Duration.ofSeconds(2));
+                bridge);
+        try {
+            RendererTuiShell shell = new RendererTuiShell(
+                    services,
+                    new ScriptedTuiInput(List.of(
+                            TuiInputEvent.submitLine("start parent"),
+                            TuiInputEvent.submitLine("allow_once"))),
+                    screen,
+                    MiniTui.DEFAULT_MAX_STEPS,
+                    bridge);
 
-        bridge.onEvent(new AgentTaskEvent.ToolStartedEvent(
-                "agent-2",
-                Optional.of("task-2"),
-                "parent-turn",
-                AgentType.PLAN,
-                java.time.Instant.EPOCH,
-                "child-tool-1",
-                "read_file"
-        ));
+            shell.runOnce();
+            assertTrue(parentStarted.await(2, TimeUnit.SECONDS));
+            PermissionRequest request = new PermissionRequest(
+                    "background-edit",
+                    PermissionRequestKind.EDIT,
+                    new PermissionResource.PathResource(Path.of("result.txt"), PathIntent.WRITE),
+                    "Allow background edit",
+                    new PermissionRequestDetails("Background edit", "Review edit", List.of("Path: result.txt")),
+                    List.of(PermissionChoice.allowOnce("allow_once", "Allow this edit")),
+                    true,
+                    PermissionScope.ONCE,
+                    new PermissionContext("permission-race-session", Optional.of("child-turn"),
+                            Optional.of("child-tool")));
+            java.util.concurrent.CompletableFuture<?> prompt = java.util.concurrent.CompletableFuture.runAsync(
+                    () -> shell.requestPermission(request));
+            waitUntil(() -> screen.latestText().contains("[1] allow_once"), Duration.ofSeconds(2));
 
-        String pending = screen.latestText();
-        assertTrue(pending.contains("◎ Agent task › [task-2] plan tool read_file started"), pending);
-        assertTrue(pending.contains("! Permission › pending"), pending);
-        assertTrue(pending.contains("● Waiting for approval..."), pending);
-        assertEquals("allow ›", screen.latestFrame().orElseThrow().lines().getLast().stripTrailing());
+            releaseParent.countDown();
+            shell.awaitIdle(Duration.ofSeconds(2));
+            shell.runOnce();
+            prompt.join();
 
-        shell.runOnce();
-        prompt.join();
+            services.subAgentTaskManager().orElseThrow().submit(AgentTaskRequest.create(
+                    AgentType.EXPLORE,
+                    "inspect",
+                    "inspect repository",
+                    "permission-race-session",
+                    "parent-turn",
+                    services.cwd().toString(),
+                    AgentRunMode.BACKGROUND));
+            assertTrue(summarized.await(2, TimeUnit.SECONDS));
+            waitUntil(() -> services.sessionMessages().stream()
+                    .anyMatch(message -> message instanceof AssistantMessage assistant
+                            && assistant.content().equals("权限后仍能汇总")), Duration.ofSeconds(2));
+        } finally {
+            services.close();
+        }
     }
 
     @Test
@@ -886,6 +893,19 @@ class RendererTuiShellTest {
 
         shell.runOnce();
         prompt.join();
+
+        // 空闲后台任务的权限弹窗结束后应恢复 NORMAL，后续任务通知仍能自动唤醒父 Agent。
+        services.subAgentTaskManager().orElseThrow().submit(AgentTaskRequest.create(
+                AgentType.EXPLORE,
+                "inspect after permission",
+                "inspect repository",
+                "session-1",
+                "parent-turn",
+                services.cwd().toString(),
+                AgentRunMode.BACKGROUND));
+        waitUntil(() -> services.sessionMessages().stream()
+                .anyMatch(message -> message instanceof AssistantMessage assistant
+                        && assistant.content().equals("unused")), Duration.ofSeconds(2));
     }
 
     @Test
@@ -969,6 +989,40 @@ class RendererTuiShellTest {
                     .map(ToolResultMessage.class::cast)
                     .anyMatch(message -> message.error() && message.content().contains("Use mvn test instead"));
             return new AssistantStep(sawFeedback ? "saw deny feedback" : "missing feedback", AssistantKind.FINAL);
+        }
+    }
+
+    private static final class PermissionRaceModelAdapter implements ModelAdapter {
+        private final CountDownLatch parentStarted;
+        private final CountDownLatch releaseParent;
+        private final CountDownLatch summarized;
+
+        private PermissionRaceModelAdapter(CountDownLatch parentStarted,
+                                           CountDownLatch releaseParent,
+                                           CountDownLatch summarized) {
+            this.parentStarted = parentStarted;
+            this.releaseParent = releaseParent;
+            this.summarized = summarized;
+        }
+
+        @Override
+        public AgentStep next(List<ChatMessage> messages) {
+            if (BackgroundNotificationModelAdapter.isChildAgentRequest(messages)) {
+                return new AssistantStep("后台结果", AssistantKind.FINAL);
+            }
+            if (BackgroundNotificationModelAdapter.containsTaskNotification(messages)) {
+                summarized.countDown();
+                return new AssistantStep("权限后仍能汇总", AssistantKind.FINAL);
+            }
+
+            parentStarted.countDown();
+            try {
+                assertTrue(releaseParent.await(5, TimeUnit.SECONDS));
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(exception);
+            }
+            return new AssistantStep("父 Turn 已结束", AssistantKind.FINAL);
         }
     }
 }

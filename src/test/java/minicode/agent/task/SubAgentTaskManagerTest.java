@@ -1,328 +1,196 @@
 package minicode.agent.task;
 
-import minicode.agent.event.AgentTaskEvent;
 import minicode.agent.model.AgentRunMode;
 import minicode.agent.model.AgentRunResult;
 import minicode.agent.model.AgentTaskRequest;
-import minicode.agent.model.AgentTaskSnapshot;
 import minicode.agent.model.AgentTaskStatus;
 import minicode.agent.model.AgentType;
+import minicode.core.message.UserMessage;
+import minicode.core.turn.CancellationToken;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
-import java.nio.file.Path;
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SubAgentTaskManagerTest {
-    @TempDir
-    Path tempDir;
-
     @Test
-    void enforcesFourRunningAndSixteenQueuedAndCompletesDurably() throws Exception {
-        AgentTaskStore store = new AgentTaskStore(tempDir);
-        AgentInbox inbox = new AgentInbox(store);
-        CountDownLatch fourStarted = new CountDownLatch(4);
+    void backgroundTaskUsesProcessLocalIdAndDestructiveNotificationDrain() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
-        AtomicInteger running = new AtomicInteger();
-        AtomicInteger maxRunning = new AtomicInteger();
-        AgentTaskExecutor executor = (request, token) -> {
-            int current = running.incrementAndGet();
-            maxRunning.accumulateAndGet(current, Math::max);
-            fourStarted.countDown();
-            try {
-                release.await();
-                return AgentRunResult.completed("done-" + request.taskId(), "FINAL");
-            } finally {
-                running.decrementAndGet();
-            }
-        };
+        AgentTaskExecutor executor = new AwaitingSuccessfulTaskExecutor(
+                release, "完整调查结果", true);
+        try (SubAgentTaskManager manager = new SubAgentTaskManager(executor)) {
+            SubAgentTaskManager.Task submitted = manager.submit(request(AgentType.EXPLORE));
 
-        try (SubAgentTaskManager manager = manager(store, inbox, executor, Duration.ofMinutes(1), 4, 16)) {
-            for (int index = 0; index < 20; index++) {
-                manager.submit(request("task-" + index));
-            }
-            assertTrue(fourStarted.await(2, TimeUnit.SECONDS));
-            assertThrows(AgentTaskRejectedException.class, () -> manager.submit(request("overflow")));
-            assertEquals(4, maxRunning.get());
-
+            assertEquals("task_1", submitted.id());
+            assertEquals(AgentTaskStatus.PENDING, submitted.status());
+            waitUntil(() -> manager.getTask("task_1").status() == AgentTaskStatus.RUNNING);
             release.countDown();
-            await(() -> manager.list("/work", "session", 100).stream()
-                    .allMatch(snapshot -> snapshot.status() == AgentTaskStatus.COMPLETED));
-            assertEquals(20, manager.list("/work", "session", 100).size());
+            waitUntil(() -> manager.getTask("task_1").status() == AgentTaskStatus.COMPLETED);
+
+            var first = manager.drainNotifications();
+            assertEquals(1, first.size());
+            assertEquals("task_1", first.getFirst().taskId());
+            assertEquals("完整调查结果", first.getFirst().output());
+            assertTrue(manager.drainNotifications().isEmpty());
         }
     }
 
     @Test
-    void cancellationSetsTokenInterruptsThreadAndCannotRegressTerminalState() throws Exception {
-        AgentTaskStore store = new AgentTaskStore(tempDir);
-        AgentInbox inbox = new AgentInbox(store);
-        CountDownLatch started = new CountDownLatch(1);
-        AtomicBoolean tokenObserved = new AtomicBoolean();
-        AtomicBoolean interrupted = new AtomicBoolean();
-        AgentTaskExecutor executor = (request, token) -> {
-            started.countDown();
-            try {
-                Thread.sleep(Duration.ofMinutes(1));
-            } catch (InterruptedException ignored) {
-                interrupted.set(true);
-                tokenObserved.set(token.isCancellationRequested());
+    void generalPurposeCanRunInBackgroundWithoutCapacityLimit() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        AgentTaskExecutor executor = new AwaitingSuccessfulTaskExecutor(release, "done", false);
+        try (SubAgentTaskManager manager = new SubAgentTaskManager(executor)) {
+            for (int index = 1; index <= 24; index++) {
+                assertEquals("task_" + index, manager.submit(request(AgentType.GENERAL_PURPOSE)).id());
             }
-            return AgentRunResult.completed("late completion", "FINAL");
-        };
+            assertEquals(24, manager.listTasks().size());
+            release.countDown();
+            waitUntil(() -> manager.listTasks().stream().allMatch(task -> task.status().isTerminal()));
+        }
+    }
 
-        try (SubAgentTaskManager manager = manager(store, inbox, executor, Duration.ofMinutes(1), 1, 1)) {
-            manager.submit(request("cancel-me"));
+    @Test
+    void cancelOnlyInterruptsRunningTaskAndTerminalStateCannotBeOverwritten() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        AgentTaskExecutor executor = new InterruptibleTaskExecutor(started, interrupted);
+        try (SubAgentTaskManager manager = new SubAgentTaskManager(executor)) {
+            String taskId = manager.submit(request(AgentType.PLAN)).id();
             assertTrue(started.await(2, TimeUnit.SECONDS));
 
-            CancelResult first = manager.cancel("cancel-me", "/work", "session", "stop now");
-            CancelResult second = manager.cancel("cancel-me", "/work", "session", "stop again");
+            manager.cancelTask(taskId);
 
-            assertTrue(first.changed());
-            assertFalse(second.changed());
-            await(interrupted::get);
-            assertTrue(tokenObserved.get());
-            await(() -> manager.find("cancel-me", "/work", "session").orElseThrow().status().isTerminal());
-            assertEquals(AgentTaskStatus.CANCELLED,
-                    manager.find("cancel-me", "/work", "session").orElseThrow().status());
+            assertTrue(interrupted.await(2, TimeUnit.SECONDS));
+            waitUntil(() -> manager.getTask(taskId).status() == AgentTaskStatus.CANCELLED);
+            assertEquals(AgentTaskStatus.CANCELLED, manager.getTask(taskId).status());
+            assertEquals(AgentTaskStatus.CANCELLED, manager.drainNotifications().getFirst().status());
         }
     }
 
     @Test
-    void queuedCancellationReleasesCapacityAndNeverExecutesTask() throws Exception {
-        AgentTaskStore store = new AgentTaskStore(tempDir);
-        AgentInbox inbox = new AgentInbox(store);
-        CountDownLatch firstStarted = new CountDownLatch(1);
-        CountDownLatch releaseFirst = new CountDownLatch(1);
-        List<String> executed = new CopyOnWriteArrayList<>();
-        AgentTaskExecutor executor = (request, token) -> {
-            executed.add(request.taskId());
-            if (request.taskId().equals("first")) {
-                firstStarted.countDown();
-                releaseFirst.await();
+    void completionWakesRegisteredParentListener() throws Exception {
+        CountDownLatch notified = new CountDownLatch(1);
+        AgentTaskExecutor executor = new FixedResultTaskExecutor(
+                AgentRunResult.completed("done", "FINAL"));
+        try (SubAgentTaskManager manager = new SubAgentTaskManager(executor)) {
+            manager.setNotificationListener(notified::countDown);
+            manager.submit(request(AgentType.EXPLORE));
+
+            assertTrue(notified.await(2, TimeUnit.SECONDS));
+            assertTrue(manager.hasNotifications());
+            assertFalse(manager.drainNotifications().isEmpty());
+        }
+    }
+
+    @Test
+    void failedBackgroundRunProducesFailedTaskAndNotification() throws Exception {
+        AgentTaskExecutor executor = new FixedResultTaskExecutor(AgentRunResult.failed(
+                "partial", "MAX_STEPS", "Child agent reached maximum steps"));
+        try (SubAgentTaskManager manager = new SubAgentTaskManager(executor)) {
+            String taskId = manager.submit(request(AgentType.PLAN)).id();
+            waitUntil(() -> manager.getTask(taskId).status() == AgentTaskStatus.FAILED);
+
+            var notification = manager.drainNotifications().getFirst();
+            assertEquals(AgentTaskStatus.FAILED, notification.status());
+            assertEquals("Child agent reached maximum steps", notification.output());
+        }
+    }
+
+    @Test
+    void notificationSourceUsesTransientUserRoleSystemReminderAndKeepsFullOutput() throws Exception {
+        AgentTaskExecutor executor = new FixedResultTaskExecutor(
+                AgentRunResult.completed("result with <T> & details", "FINAL"));
+        try (SubAgentTaskManager manager = new SubAgentTaskManager(executor)) {
+            manager.submit(request(AgentType.EXPLORE));
+            waitUntil(manager::hasNotifications);
+
+            var messages = new SubAgentTurnMessageSource(manager).drain("session", "turn");
+
+            assertEquals(1, messages.size());
+            String content = ((UserMessage) messages.getFirst()).content();
+            assertTrue(content.startsWith("<system-reminder>"));
+            assertTrue(content.contains("<task-notification>"));
+            assertTrue(content.contains("result with <T> & details"));
+            assertTrue(new SubAgentTurnMessageSource(manager).drain("session", "turn").isEmpty());
+        }
+    }
+
+    private static AgentTaskRequest request(AgentType type) {
+        return AgentTaskRequest.create(type, "inspect", "inspect repository",
+                "session", "turn", "/work", AgentRunMode.BACKGROUND);
+    }
+
+    private static void waitUntil(java.util.function.BooleanSupplier condition) throws Exception {
+        long deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(5);
+        }
+        assertTrue(condition.getAsBoolean(), "condition was not met before timeout");
+    }
+
+    private static final class AwaitingSuccessfulTaskExecutor implements AgentTaskExecutor {
+        private final CountDownLatch release;
+        private final String output;
+        private final boolean requireVirtualThread;
+
+        private AwaitingSuccessfulTaskExecutor(CountDownLatch release,
+                                               String output,
+                                               boolean requireVirtualThread) {
+            this.release = release;
+            this.output = output;
+            this.requireVirtualThread = requireVirtualThread;
+        }
+
+        @Override
+        public AgentRunResult execute(AgentTaskRequest request,
+                                      CancellationToken cancellationToken) throws InterruptedException {
+            if (requireVirtualThread) {
+                assertTrue(Thread.currentThread().isVirtual());
             }
-            return AgentRunResult.completed("done", "FINAL");
-        };
-
-        try (SubAgentTaskManager manager = manager(store, inbox, executor, Duration.ofMinutes(1), 1, 1)) {
-            manager.submit(request("first"));
-            assertTrue(firstStarted.await(2, TimeUnit.SECONDS));
-            manager.submit(request("cancel-while-queued"));
-            assertEquals(AgentTaskStatus.QUEUED,
-                    manager.find("cancel-while-queued", "/work", "session").orElseThrow().status());
-
-            CancelResult cancelled = manager.cancel(
-                    "cancel-while-queued", "/work", "session", "no longer needed");
-            assertTrue(cancelled.changed());
-            assertEquals(AgentTaskStatus.CANCELLED, cancelled.snapshot().status());
-
-            // 已取消的排队任务必须在运行中任务退出前释放容量。
-            manager.submit(request("replacement"));
-            releaseFirst.countDown();
-            await(() -> manager.find("replacement", "/work", "session").orElseThrow().status()
-                    == AgentTaskStatus.COMPLETED);
-
-            assertFalse(executed.contains("cancel-while-queued"));
-            assertEquals(AgentTaskStatus.CANCELLED,
-                    store.find("cancel-while-queued", "/work", "session").orElseThrow().status());
+            release.await(2, TimeUnit.SECONDS);
+            return AgentRunResult.completed(output, "FINAL");
         }
     }
 
-    @Test
-    void managerCannotCancelNonTerminalTaskOwnedByAnotherManager() throws Exception {
-        Path root = tempDir.resolve("shared");
-        AgentTaskStore firstStore = new AgentTaskStore(root);
-        AgentTaskStore secondStore = new AgentTaskStore(root);
-        CountDownLatch started = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
+    private static final class InterruptibleTaskExecutor implements AgentTaskExecutor {
+        private final CountDownLatch started;
+        private final CountDownLatch interrupted;
 
-        try (SubAgentTaskManager first = manager(firstStore, new AgentInbox(firstStore), (request, token) -> {
-            started.countDown();
-            release.await();
-            return AgentRunResult.completed("owner completed", "FINAL");
-        }, Duration.ofMinutes(1), 1, 1);
-             SubAgentTaskManager second = manager(secondStore, new AgentInbox(secondStore),
-                     (request, token) -> AgentRunResult.completed("unused", "FINAL"),
-                     Duration.ofMinutes(1), 1, 1)) {
-            first.submit(request("owned-elsewhere"));
-            assertTrue(started.await(2, TimeUnit.SECONDS));
-
-            assertThrows(IllegalArgumentException.class,
-                    () -> second.cancel("owned-elsewhere", "/work", "session", "cross-instance cancel"));
-            assertEquals(AgentTaskStatus.RUNNING,
-                    second.find("owned-elsewhere", "/work", "session").orElseThrow().status());
-
-            release.countDown();
-            await(() -> firstStore.find("owned-elsewhere", "/work", "session").orElseThrow().status()
-                    == AgentTaskStatus.COMPLETED);
-        }
-    }
-
-    @Test
-    void timeoutInterruptsExecutionAndCloseMarksRemainingTasksInterrupted() throws Exception {
-        AgentTaskStore timeoutStore = new AgentTaskStore(tempDir.resolve("timeout"));
-        CountDownLatch timeoutExited = new CountDownLatch(1);
-        try (SubAgentTaskManager manager = manager(timeoutStore, new AgentInbox(timeoutStore),
-                (request, token) -> {
-                    try {
-                        while (!token.isCancellationRequested()) {
-                            Thread.onSpinWait();
-                        }
-                        token.throwIfCancellationRequested(minicode.core.turn.CancellationPhase.TOOL_EXECUTION);
-                        return AgentRunResult.completed("unexpected", "FINAL");
-                    } finally {
-                        timeoutExited.countDown();
-                    }
-                }, Duration.ofMillis(50), 1, 1)) {
-            manager.submit(request("timeout"));
-            await(() -> manager.find("timeout", "/work", "session").orElseThrow().status()
-                    == AgentTaskStatus.TIMED_OUT);
-            assertTrue(timeoutExited.await(2, TimeUnit.SECONDS));
-            assertEquals(AgentTaskStatus.TIMED_OUT,
-                    timeoutStore.find("timeout", "/work", "session").orElseThrow().status());
+        private InterruptibleTaskExecutor(CountDownLatch started, CountDownLatch interrupted) {
+            this.started = started;
+            this.interrupted = interrupted;
         }
 
-        AgentTaskStore closeStore = new AgentTaskStore(tempDir.resolve("close"));
-        CountDownLatch started = new CountDownLatch(1);
-        CountDownLatch closeExited = new CountDownLatch(1);
-        SubAgentTaskManager manager = manager(closeStore, new AgentInbox(closeStore), (request, token) -> {
+        @Override
+        public AgentRunResult execute(AgentTaskRequest request,
+                                      CancellationToken cancellationToken) throws InterruptedException {
             started.countDown();
             try {
-                while (!token.isCancellationRequested()) {
-                    Thread.onSpinWait();
+                while (true) {
+                    Thread.sleep(100);
                 }
-                token.throwIfCancellationRequested(minicode.core.turn.CancellationPhase.TOOL_EXECUTION);
-                return AgentRunResult.completed("unexpected", "FINAL");
-            } finally {
-                closeExited.countDown();
-            }
-        }, Duration.ofMinutes(1), 1, 1);
-        manager.submit(request("close"));
-        assertTrue(started.await(2, TimeUnit.SECONDS));
-
-        manager.close();
-
-        assertEquals(0, closeExited.getCount(), "close must wait for the child execution to stop");
-        assertEquals(AgentTaskStatus.INTERRUPTED,
-                closeStore.find("close", "/work", "session").orElseThrow().status());
-    }
-
-    @Test
-    void terminalNotificationAcknowledgementCannotBeReopenedByLifecyclePersistence() {
-        AgentTaskStore store = new AgentTaskStore(tempDir);
-        AgentInbox inbox = new AgentInbox(store);
-        List<minicode.agent.model.AgentNotificationMessage> notifications = new CopyOnWriteArrayList<>();
-
-        try (SubAgentTaskManager manager = new SubAgentTaskManager(store, inbox,
-                (request, token) -> AgentRunResult.completed("result", "FINAL"), event -> {
-                    if (event instanceof AgentTaskEvent.StateChangedEvent state
-                            && state.status().isTerminal()) {
-                        notifications.addAll(inbox.drain("/work", "session"));
-                    }
-                }, Clock.systemUTC(), Duration.ofMinutes(1), 1, 1)) {
-            manager.submit(request("notify-once"));
-            await(() -> manager.find("notify-once", "/work", "session").orElseThrow().status()
-                    == AgentTaskStatus.COMPLETED);
-
-            assertEquals(1, notifications.size());
-            assertTrue(inbox.drain("/work", "session").isEmpty());
-            assertTrue(store.find("notify-once", "/work", "session")
-                    .orElseThrow().notificationDelivered());
-        }
-    }
-
-    @Test
-    void recoveryPersistsInterruptedTasksAndEventFailuresDoNotAffectCompletion() {
-        AgentTaskStore store = new AgentTaskStore(tempDir, Long.MAX_VALUE, java.util.Optional.empty());
-        AgentTaskSnapshot queued = AgentTaskSnapshot.queued(request("old"));
-        store.save(queued);
-        List<AgentTaskEvent> events = new ArrayList<>();
-        try (SubAgentTaskManager manager = new SubAgentTaskManager(store, new AgentInbox(store),
-                (request, token) -> AgentRunResult.completed("ok", "FINAL"), event -> {
-                    events.add(event);
-                    throw new IllegalStateException("renderer failed");
-                }, Clock.systemUTC(), Duration.ofMinutes(1), 1, 1)) {
-            assertEquals(AgentTaskStatus.INTERRUPTED,
-                    manager.recover("/work", "session").getFirst().status());
-            manager.submit(request("new"));
-            await(() -> manager.find("new", "/work", "session").orElseThrow().status()
-                    == AgentTaskStatus.COMPLETED);
-        }
-        assertFalse(events.isEmpty());
-    }
-
-    @Test
-    void startupRecoveryInterruptsAllScopesButPublishesOnlyCurrentScope() {
-        AgentTaskStore store = new AgentTaskStore(tempDir, Long.MAX_VALUE, java.util.Optional.empty());
-        store.save(AgentTaskSnapshot.queued(request("current")));
-        AgentTaskRequest foreign = new AgentTaskRequest(
-                "foreign", "agent-foreign", AgentType.PLAN, "description", "prompt",
-                "other-session", "other-turn", "/other-work", AgentRunMode.BACKGROUND, Instant.now());
-        store.save(AgentTaskSnapshot.queued(foreign));
-        List<AgentTaskEvent> events = new CopyOnWriteArrayList<>();
-
-        try (SubAgentTaskManager manager = new SubAgentTaskManager(store, new AgentInbox(store),
-                (request, token) -> AgentRunResult.completed("unused", "FINAL"), events::add,
-                Clock.systemUTC(), Duration.ofMinutes(1), 1, 1)) {
-            manager.recoverPersistedTasks("/work", "session");
-        }
-
-        assertEquals(AgentTaskStatus.INTERRUPTED,
-                store.find("current", "/work", "session").orElseThrow().status());
-        assertEquals(AgentTaskStatus.INTERRUPTED,
-                store.find("foreign", "/other-work", "other-session").orElseThrow().status());
-        assertEquals(1, events.size());
-        AgentTaskEvent.StateChangedEvent event = (AgentTaskEvent.StateChangedEvent) events.getFirst();
-        assertEquals("current", event.taskId().orElseThrow());
-    }
-
-    private static SubAgentTaskManager manager(AgentTaskStore store,
-                                               AgentInbox inbox,
-                                               AgentTaskExecutor executor,
-                                               Duration timeout,
-                                               int maxConcurrent,
-                                               int maxQueued) {
-        return new SubAgentTaskManager(store, inbox, executor, event -> { }, Clock.systemUTC(), timeout,
-                maxConcurrent, maxQueued);
-    }
-
-    private static AgentTaskRequest request(String taskId) {
-        return new AgentTaskRequest(taskId, "agent-" + taskId, AgentType.EXPLORE, "description", "prompt",
-                "session", "turn", "/work", AgentRunMode.BACKGROUND, Instant.now());
-    }
-
-    private static void await(Check check) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (System.nanoTime() < deadline) {
-            if (check.evaluate()) {
-                return;
-            }
-            try {
-                Thread.sleep(10);
             } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                throw new AssertionError(exception);
+                interrupted.countDown();
+                throw exception;
             }
         }
-        throw new AssertionError("condition was not met before timeout");
     }
 
-    @FunctionalInterface
-    private interface Check {
-        boolean evaluate();
+    private static final class FixedResultTaskExecutor implements AgentTaskExecutor {
+        private final AgentRunResult result;
+
+        private FixedResultTaskExecutor(AgentRunResult result) {
+            this.result = result;
+        }
+
+        @Override
+        public AgentRunResult execute(AgentTaskRequest request, CancellationToken cancellationToken) {
+            return result;
+        }
     }
 }

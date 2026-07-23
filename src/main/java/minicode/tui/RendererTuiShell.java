@@ -1,6 +1,7 @@
 package minicode.tui;
 
 import minicode.agent.event.AgentTaskEvent;
+import minicode.agent.task.SubAgentTaskManager;
 import minicode.app.ApplicationServices;
 import minicode.context.stats.ContextWarningLevel;
 import minicode.core.event.AgentEvent;
@@ -86,6 +87,10 @@ public final class RendererTuiShell {
         }
         this.state = RenderState.empty().withTranscript(projectSessionHistory());
         redraw();
+        SubAgentTaskManager taskManager = services.subAgentTaskManager().orElse(null);
+        if (taskManager != null) {
+            taskManager.setNotificationListener(this::startNotificationTurnIfIdle);
+        }
     }
 
     public void runOnce() {
@@ -216,7 +221,8 @@ public final class RendererTuiShell {
         Objects.requireNonNull(request, "request");
         CompletableFuture<PermissionPromptResult> future = new CompletableFuture<>();
         synchronized (lock) {
-            pendingPermission = new PendingPermission(request, future, Optional.empty());
+            pendingPermission = new PendingPermission(
+                    request, future, Optional.empty(), state.input(), state.status());
             appendTranscriptLocked(TranscriptBlock.permissionAudit(request.requestId(),
                     permissionPendingText(request)));
             state = state.withStatus(StatusState.of("Waiting for approval..."))
@@ -344,13 +350,6 @@ public final class RendererTuiShell {
         if ("/skill".equals(trimmed)) {
             runSkillCommand();
             return true;
-        }
-        synchronized (lock) {
-            if (activeTurn != null && activeTurn.isAlive()) {
-                appendTranscriptLocked(TranscriptBlock.diagnostic("busy: wait for the current turn to finish"));
-                redrawLocked();
-                return true;
-            }
         }
         boolean answerMode;
         synchronized (lock) {
@@ -485,12 +484,11 @@ public final class RendererTuiShell {
                 String feedback = line == null || line.isBlank() ? "Permission denied by user" : line;
                 PermissionPromptResult result = PermissionPromptResult.deny(choice.key(), choice.decision(), feedback);
 
-                // 记录权限审计信息，并恢复为 Agent 正在处理的界面状态。
+                // 记录权限审计信息，并恢复权限弹窗前的界面状态。
                 appendTranscriptLocked(TranscriptBlock.permissionAudit(pending.request().requestId(),
                         "denied " + choice.key() + " feedback=" + oneLine(feedback)));
                 pendingPermission = null;
-                state = state.withStatus(StatusState.thinking())
-                        .withInput(InputState.of(InputState.Mode.BUSY, "", 0));
+                restoreAfterPermissionLocked(pending);
                 redrawLocked();
                 return result;
             }
@@ -510,7 +508,9 @@ public final class RendererTuiShell {
 
             // 需要拒绝原因的选项暂不产生最终结果，只把 TUI 切换到反馈输入阶段。
             if (choice.requiresFeedback()) {
-                pendingPermission = new PendingPermission(pending.request(), pending.future(), Optional.of(choice));
+                pendingPermission = new PendingPermission(
+                        pending.request(), pending.future(), Optional.of(choice),
+                        pending.resumeInput(), pending.resumeStatus());
                 state = state.withStatus(StatusState.of("Permission feedback..."))
                         .withInput(InputState.of(InputState.Mode.PERMISSION_FEEDBACK, "", 0));
                 redrawLocked();
@@ -522,42 +522,79 @@ public final class RendererTuiShell {
                     ? PermissionPromptResult.allow(choice.key(), choice.decision())
                     : PermissionPromptResult.deny(choice.key(), choice.decision(), null);
 
-            // 权限交互结束：写入审计记录、清除待处理请求并恢复忙碌状态。
+            // 权限交互结束：写入审计记录、清除待处理请求并恢复弹窗前的界面状态。
+            // 父 Turn 发起的权限请求会恢复 BUSY；空闲后台任务发起的请求会恢复 NORMAL，
+            // 从而允许任务结束后的通知自动唤醒父 Agent。
             appendTranscriptLocked(TranscriptBlock.permissionAudit(pending.request().requestId(),
                     (result.allowed() ? "allowed " : "denied ") + choice.key()));
             pendingPermission = null;
-            state = state.withStatus(StatusState.thinking())
-                    .withInput(InputState.of(InputState.Mode.BUSY, "", 0));
+            restoreAfterPermissionLocked(pending);
             redrawLocked();
             return result;
         }
     }
 
+    /** 恢复权限弹窗下方的最新界面状态，避免用过期 BUSY 快照覆盖已经结束的父 Turn。 */
+    private void restoreAfterPermissionLocked(PendingPermission pending) {
+        InputState currentInput = state.input();
+        boolean permissionOverlay = currentInput.mode() == InputState.Mode.PENDING_PERMISSION
+                || currentInput.mode() == InputState.Mode.PERMISSION_FEEDBACK;
+        InputState nextInput = permissionOverlay ? pending.resumeInput() : currentInput;
+        StatusState nextStatus = permissionOverlay ? pending.resumeStatus() : state.status();
+
+        // 权限等待期间父 Turn 可能已经结束。此时旧快照中的 BUSY 不再有对应执行线程，
+        // 必须回到可输入状态，否则后台结果通知也无法启动 continuation turn。
+        if (activeTurn == null && nextInput.mode() == InputState.Mode.BUSY) {
+            state = state.clearStatus().withInput(InputState.empty());
+            return;
+        }
+        state = state.withStatus(nextStatus).withInput(nextInput);
+    }
+
     private void startTurn(String line, boolean answerMode) {
-        List<ChatMessage> history = services.sessionMessages();
         UserMessage userMessage = new UserMessage(line);
-        // 更新 UI
+        Thread thread = new Thread(
+                new UserTurnRunner(this, userMessage),
+                "minicode-renderer-turn");
         synchronized (lock) {
+            // activeTurn 非空即表示已经预留或正在执行，不能用 isAlive 判断尚未 start 的线程。
+            if (activeTurn != null) {
+                appendTranscriptLocked(TranscriptBlock.diagnostic("busy: wait for the current turn to finish"));
+                redrawLocked();
+                return;
+            }
             appendTranscriptLocked(answerMode
                     ? TranscriptBlock.userAnswer(userMessage.content())
                     : TranscriptBlock.user(userMessage.content()));
             state = state.withInput(InputState.of(InputState.Mode.BUSY, "", 0))
                     .withStatus(StatusState.thinking());
+            activeTurn = thread;
             redrawLocked();
         }
-        // 持久化用户消息
-        services.sessionPersistenceRunner().apply(new TurnPersistencePlan(
-                List.of(new PersistenceAction.AppendMessagesAction(List.of(userMessage)))
-        ));
-        // 组装消息
-        List<ChatMessage> turnMessages = new ArrayList<>(history);
-        turnMessages.add(userMessage);
-        Thread thread = new Thread(() -> runTurnInBackground(turnMessages), "minicode-renderer-turn");
-        synchronized (lock) {
-            // activeTurn保存当前正在后台执行这一轮 Agent 对话的线程对象。
-            activeTurn = thread;
-        }
         thread.start();
+    }
+
+    private void runUserTurnInBackground(UserMessage userMessage) {
+        try {
+            List<ChatMessage> history = services.sessionMessages();
+            services.sessionPersistenceRunner().apply(new TurnPersistencePlan(
+                    List.of(new PersistenceAction.AppendMessagesAction(List.of(userMessage)))
+            ));
+            List<ChatMessage> turnMessages = new ArrayList<>(history);
+            turnMessages.add(userMessage);
+            runTurnInBackground(turnMessages);
+        } catch (RuntimeException exception) {
+            synchronized (lock) {
+                if (Thread.currentThread() == activeTurn) {
+                    activeTurn = null;
+                }
+                state = state.clearStatus().withInput(InputState.empty());
+                appendTranscriptLocked(TranscriptBlock.diagnostic(
+                        "turn_start_failed: " + Objects.toString(exception.getMessage(), "unknown error")));
+                redrawLocked();
+            }
+            startNotificationTurnIfIdle();
+        }
     }
 
     private void runTurnInBackground(List<ChatMessage> turnMessages) {
@@ -586,7 +623,40 @@ public final class RendererTuiShell {
                     redrawLocked();
                 }
             }
+            // 当前父 Turn 结束时如果后台任务刚好完成，立即自动启动一次结果汇总。
+            startNotificationTurnIfIdle();
         }
+    }
+
+    /** 父 Agent 空闲且存在子任务通知时，无需用户输入即可继续一轮。 */
+    private void startNotificationTurnIfIdle() {
+        SubAgentTaskManager taskManager = services.subAgentTaskManager().orElse(null);
+        if (taskManager == null || !taskManager.hasNotifications()) {
+            return;
+        }
+
+        Thread thread;
+        synchronized (lock) {
+            InputState inputState = state.input();
+            boolean interactive = pendingPermission != null
+                    || inputState.mode() != InputState.Mode.NORMAL
+                    || !inputState.text().isBlank();
+            if (activeTurn != null || interactive || !taskManager.hasNotifications()) {
+                return;
+            }
+            state = state.withInput(InputState.of(InputState.Mode.BUSY, "", 0))
+                    .withStatus(StatusState.thinking());
+            redrawLocked();
+            thread = new Thread(
+                    this::runNotificationTurnInBackground,
+                    "minicode-renderer-agent-notification");
+            activeTurn = thread;
+        }
+        thread.start();
+    }
+
+    private void runNotificationTurnInBackground() {
+        runTurnInBackground(services.sessionMessages());
     }
 
     private void runCompactCommand() {
@@ -875,13 +945,34 @@ public final class RendererTuiShell {
      * @param request 待用户确认的权限请求
      * @param future 等待用户权限选择完成的 future
      * @param feedbackChoice 当前是否处于需要反馈的拒绝选项
+     * @param resumeInput 权限交互结束后恢复的输入状态
+     * @param resumeStatus 权限交互结束后恢复的状态栏
      */
+    private static final class UserTurnRunner implements Runnable {
+        private final RendererTuiShell shell;
+        private final UserMessage userMessage;
+
+        private UserTurnRunner(RendererTuiShell shell, UserMessage userMessage) {
+            this.shell = Objects.requireNonNull(shell, "shell");
+            this.userMessage = Objects.requireNonNull(userMessage, "userMessage");
+        }
+
+        @Override
+        public void run() {
+            shell.runUserTurnInBackground(userMessage);
+        }
+    }
+
     private record PendingPermission(PermissionRequest request, CompletableFuture<PermissionPromptResult> future,
-                                     Optional<PermissionChoice> feedbackChoice) {
+                                     Optional<PermissionChoice> feedbackChoice,
+                                     InputState resumeInput,
+                                     StatusState resumeStatus) {
         private PendingPermission {
             request = Objects.requireNonNull(request, "request");
             future = Objects.requireNonNull(future, "future");
             feedbackChoice = Objects.requireNonNull(feedbackChoice, "feedbackChoice");
+            resumeInput = Objects.requireNonNull(resumeInput, "resumeInput");
+            resumeStatus = Objects.requireNonNull(resumeStatus, "resumeStatus");
         }
     }
 }
