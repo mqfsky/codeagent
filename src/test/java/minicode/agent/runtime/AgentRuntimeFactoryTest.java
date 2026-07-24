@@ -27,7 +27,10 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.nio.file.Path;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -100,6 +103,78 @@ class AgentRuntimeFactoryTest {
         assertSame(parent.find("run_command").orElseThrow(), child.find("run_command").orElseThrow());
         assertSame(parent.find("mcp__server__tool").orElseThrow(),
                 child.find("mcp__server__tool").orElseThrow());
+    }
+
+    @Test
+    void childRegistryBlocksExternalWritesIncludingMcpTools() {
+        ToolRegistry parent = new ToolRegistry();
+        parent.register(tool("mcp__server__read", ToolOrigin.MCP, ToolCapability.READ));
+        parent.register(tool("mcp__server__write", ToolOrigin.MCP, ToolCapability.EXTERNAL_WRITE));
+        parent.register(tool("external_write", ToolOrigin.EXTENSION, ToolCapability.EXTERNAL_WRITE));
+
+        ToolRegistry child = new ChildToolRegistryFactory().create(
+                parent,
+                AgentSpec.forType(AgentType.GENERAL_PURPOSE),
+                AgentRunMode.SYNC
+        );
+
+        assertEquals(List.of("mcp__server__read"),
+                child.list().stream().map(tool -> tool.metadata().name()).toList());
+        assertTrue(child.find("mcp__server__write").isEmpty());
+        assertTrue(child.find("external_write").isEmpty());
+    }
+
+    @Test
+    void childRegistryBlocksTheConfiguredExternalCliWithoutRemovingNormalCommands() {
+        AtomicInteger delegatedRuns = new AtomicInteger();
+        JsonNode schema = JsonNodeFactory.instance.objectNode();
+        ToolMetadata metadata = new ToolMetadata(
+                "run_command",
+                "test command tool",
+                schema,
+                ToolOrigin.BUILTIN,
+                Set.of(ToolCapability.COMMAND),
+                ToolStatus.AVAILABLE
+        );
+        Tool commandTool = new Tool() {
+            @Override public ToolMetadata metadata() { return metadata; }
+            @Override public JsonNode inputSchema() { return schema; }
+            @Override public ValidationResult validateInput(JsonNode input) {
+                return ValidationResult.valid(input);
+            }
+            @Override public ToolResult run(JsonNode input, ToolContext context) {
+                delegatedRuns.incrementAndGet();
+                return ToolResult.ok("ran");
+            }
+        };
+        ToolRegistry parent = new ToolRegistry();
+        parent.register(commandTool);
+        ToolRegistry child = new ChildToolRegistryFactory(
+                Set.of(Path.of("/opt/homebrew/bin/lark-cli"))
+        ).create(parent, AgentSpec.forType(AgentType.GENERAL_PURPOSE), AgentRunMode.SYNC);
+        Tool restrictedCommand = child.find("run_command").orElseThrow();
+        ToolContext context = new ToolContext(
+                Path.of(".").toAbsolutePath(),
+                "session",
+                Optional.of("turn"),
+                Optional.of("tool-use")
+        );
+        var absoluteInput = JsonNodeFactory.instance.objectNode()
+                .put("command", "/opt/homebrew/bin/lark-cli");
+        absoluteInput.putArray("args");
+        var byNameInput = JsonNodeFactory.instance.objectNode().put("command", "lark-cli");
+        byNameInput.putArray("args");
+        var normalInput = JsonNodeFactory.instance.objectNode().put("command", "git");
+        normalInput.putArray("args");
+
+        ToolResult absolute = restrictedCommand.run(absoluteInput, context);
+        ToolResult byName = restrictedCommand.run(byNameInput, context);
+        ToolResult normal = restrictedCommand.run(normalInput, context);
+
+        assertTrue(absolute.error());
+        assertTrue(byName.error());
+        assertFalse(normal.error());
+        assertEquals(1, delegatedRuns.get());
     }
 
     @Test

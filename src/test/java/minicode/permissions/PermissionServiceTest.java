@@ -282,6 +282,73 @@ class PermissionServiceTest {
     }
 
     @Test
+    void ensureExternalActionShowsReviewFactsAndOffersOnlyOneShotChoices() {
+        CapturingPromptHandler promptHandler = new CapturingPromptHandler(
+                PermissionPromptResult.allow("allow_once", PermissionDecision.ALLOW_ONCE)
+        );
+        PermissionService service = new PromptingPermissionService(promptHandler, new InMemoryPermissionStore());
+        PermissionResource.ExternalActionResource resource = externalActionResource();
+
+        PermissionGrant grant = service.ensureExternalAction(resource, context());
+
+        assertEquals(PermissionKind.EXTERNAL_ACTION, grant.kind());
+        assertEquals(PermissionGrantScope.ONCE, grant.scope());
+        assertEquals(PermissionPersistence.MEMORY, grant.persistence());
+        assertEquals(resource, grant.resource());
+
+        PermissionRequest request = promptHandler.request;
+        assertEquals(PermissionRequestKind.EXTERNAL_ACTION, request.kind());
+        assertEquals(List.of(
+                        PermissionDecision.ALLOW_ONCE,
+                        PermissionDecision.DENY_ONCE,
+                        PermissionDecision.DENY_WITH_FEEDBACK
+                ),
+                request.choices().stream().map(PermissionChoice::decision).toList());
+        assertEquals(List.of(
+                        "Service: feishu",
+                        "Action: append_blocks",
+                        "Target: doc-123",
+                        "Blocks: 2",
+                        "Content summary: append release notes"
+                ),
+                request.details().facts());
+    }
+
+    @Test
+    void ensureExternalActionDenyWithFeedbackPreservesFeedback() {
+        PermissionService service = new PromptingPermissionService(request ->
+                PermissionPromptResult.deny(
+                        "deny_feedback",
+                        PermissionDecision.DENY_WITH_FEEDBACK,
+                        "Use the draft document"
+                ));
+
+        PermissionDeniedException exception = assertThrows(PermissionDeniedException.class,
+                () -> service.ensureExternalAction(externalActionResource(), context()));
+
+        assertEquals(PermissionRequestKind.EXTERNAL_ACTION, exception.request().kind());
+        assertEquals(Optional.of("deny_feedback"), exception.choiceKey());
+        assertEquals(Optional.of("Use the draft document"), exception.feedback());
+    }
+
+    @Test
+    void storedExternalActionAllowCannotBypassPerActionPrompt() {
+        InMemoryPermissionStore store = new InMemoryPermissionStore();
+        PermissionResource.ExternalActionResource resource = externalActionResource();
+        store.allow(PermissionKind.EXTERNAL_ACTION, resource);
+        CapturingPromptHandler promptHandler = new CapturingPromptHandler(
+                PermissionPromptResult.allow("allow_once", PermissionDecision.ALLOW_ONCE)
+        );
+        PermissionService service = new PromptingPermissionService(promptHandler, store);
+
+        PermissionGrant grant = service.ensureExternalAction(resource, context());
+
+        assertNotNull(promptHandler.request);
+        assertEquals(PermissionGrantScope.ONCE, grant.scope());
+        assertEquals(PermissionPersistence.MEMORY, grant.persistence());
+    }
+
+    @Test
     void ensureEditBuildsReviewRequestDetailsAndChoicesWithoutAllowAlways() {
         PermissionResource.EditResource resource = editResource("void oldName() {}\n", "void newName() {}\n");
         CapturingPromptHandler promptHandler = new CapturingPromptHandler(
@@ -405,6 +472,16 @@ class PermissionServiceTest {
                 after
         );
         return new PermissionResource.EditResource(review, Optional.of("tool-use-1"));
+    }
+
+    private static PermissionResource.ExternalActionResource externalActionResource() {
+        return new PermissionResource.ExternalActionResource(
+                "feishu",
+                "append_blocks",
+                "doc-123",
+                "sha256:append-release-notes",
+                List.of("Blocks: 2", "Content summary: append release notes")
+        );
     }
 
     private static String choiceLabel(PermissionRequest request, String key) {

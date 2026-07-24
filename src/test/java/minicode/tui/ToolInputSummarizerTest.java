@@ -132,4 +132,17 @@ class ToolInputSummarizerTest {
         assertFalse(summary.contains("mcp-secret"), summary);
         assertTrue(summary.length() <= 240, summary);
     }
+
+    @Test
+    void feishuCalendarSummaryShowsOnlyTitleAndOriginalTimeExpression() {
+        ObjectNode input = JsonNodeFactory.instance.objectNode()
+                .put("summary", "看八股文")
+                .put("originalTimeText", "明天九点")
+                .put("description", "不应出现在执行摘要中的详细说明");
+
+        String summary = ToolInputSummarizer.summarize("create_feishu_calendar_event", input);
+
+        assertEquals("title=\"看八股文\" when=\"明天九点\"", summary);
+        assertFalse(summary.contains("详细说明"));
+    }
 }

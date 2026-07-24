@@ -22,6 +22,7 @@ import minicode.context.compact.ManualCompactResult;
 import minicode.context.stats.ContextStatsCalculator;
 import minicode.context.stats.ModelContextWindow;
 import minicode.config.ProviderKind;
+import minicode.config.FeishuCalendarConfig;
 import minicode.config.RuntimeConfig;
 import minicode.core.event.AgentEventSink;
 import minicode.core.loop.AgentLoop;
@@ -40,6 +41,8 @@ import minicode.model.ModelMetadataResolver;
 import minicode.model.anthropic.AnthropicModelsApiClient;
 import minicode.model.anthropic.HttpAnthropicTransport;
 import minicode.model.langchain4j.LangChain4jModelAdapter;
+import minicode.integrations.feishu.calendar.CalendarTimeResolver;
+import minicode.integrations.feishu.calendar.LarkCliFeishuCalendarGateway;
 import minicode.init.ProjectInitializer;
 import minicode.mcp.McpRuntime;
 import minicode.mcp.McpServerSummary;
@@ -73,6 +76,7 @@ import minicode.tools.builtin.ReadFilePathAccess;
 import minicode.tools.builtin.ReadFileTool;
 import minicode.tools.builtin.RunCommandTool;
 import minicode.tools.builtin.WriteFileTool;
+import minicode.tools.extension.CreateFeishuCalendarEventTool;
 import minicode.tools.registry.ToolRegistry;
 import minicode.tools.result.ToolResultStorage;
 import minicode.workspace.WorkspacePathResolver;
@@ -82,6 +86,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.ArrayList;
 import java.util.function.Supplier;
@@ -310,6 +315,9 @@ public record ApplicationServices(ToolRegistry toolRegistry,
 
         // 注册工具
         ToolRegistry registry = createBuiltInToolRegistry(permissionService, workspacePathResolver, skillRegistry);
+        runtimeConfig.flatMap(config -> config.integrations().feishuCalendar())
+                .filter(FeishuCalendarConfig::enabled)
+                .ifPresent(config -> registerFeishuCalendarTool(registry, permissionService, config));
 
         // 这个 config 目前是配置文件，目前配置文件中没有配 mcpserver，mcpruntime 不生效
         // TODO 配置 MCP
@@ -344,7 +352,11 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         // 负责生产子 agent 运行环境
         AgentRuntimeFactory agentRuntimeFactory = new AgentRuntimeFactory(
                 registry,
-                new ChildToolRegistryFactory(),
+                new ChildToolRegistryFactory(runtimeConfig
+                        .flatMap(config -> config.integrations().feishuCalendar())
+                        .filter(FeishuCalendarConfig::enabled)
+                        .map(config -> Set.of(config.cliPath()))
+                        .orElseGet(Set::of)),
                 childModelAdapterFactory,
                 new SubAgentPromptBuilder(),
                 new ChildContextManagerFactory(actualHome.resolve("agent-tool-results")),
@@ -486,6 +498,18 @@ public record ApplicationServices(ToolRegistry toolRegistry,
         registry.register(new PatchFileTool(permissionService, workspacePathResolver));
         registry.register(new ModifyFileTool(permissionService, workspacePathResolver));
         return registry;
+    }
+
+    private static void registerFeishuCalendarTool(ToolRegistry registry,
+                                                   PermissionService permissionService,
+                                                   FeishuCalendarConfig config) {
+        java.time.Clock clock = java.time.Clock.system(config.timezone());
+        registry.register(new CreateFeishuCalendarEventTool(
+                permissionService,
+                new CalendarTimeResolver(clock, config.timezone(), config.defaultDurationMinutes()),
+                new LarkCliFeishuCalendarGateway(config.cliPath(), config.timeout()),
+                config.defaultReminderMinutes()
+        ));
     }
 
     /**

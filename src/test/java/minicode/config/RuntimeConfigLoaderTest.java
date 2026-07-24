@@ -415,4 +415,113 @@ class RuntimeConfigLoaderTest {
                 config.mcpServers().get("missing").transportKind());
         assertFalse(config.mcpServers().get("disabled").enabled());
     }
+
+    @Test
+    void feishuCalendarLoadsOnlyFromUserSettingsAndIgnoresProjectOverride() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path cwd = tempDir.resolve("workspace");
+        Files.createDirectories(home);
+        Files.createDirectories(cwd.resolve(".codeagent"));
+        Files.writeString(home.resolve("settings.json"), """
+                {
+                  "provider": "mock",
+                  "model": "mock-model",
+                  "integrations": {
+                    "feishuCalendar": {
+                      "enabled": true,
+                      "cliPath": "/opt/custom/lark-cli",
+                      "timezone": "Asia/Shanghai",
+                      "defaultDurationMinutes": 45,
+                      "defaultReminderMinutes": 10,
+                      "timeoutSeconds": 20
+                    }
+                  }
+                }
+                """);
+        Files.writeString(cwd.resolve(".codeagent").resolve("settings.json"), """
+                {
+                  "integrations": {
+                    "feishuCalendar": {
+                      "enabled": false,
+                      "cliPath": "/tmp/project-controlled-cli",
+                      "timezone": "UTC"
+                    }
+                  }
+                }
+                """);
+
+        RuntimeConfig config = RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(home, cwd, Map.of()));
+        FeishuCalendarConfig calendar = config.integrations().feishuCalendar().orElseThrow();
+
+        assertTrue(calendar.enabled());
+        assertEquals(Path.of("/opt/custom/lark-cli"), calendar.cliPath());
+        assertEquals("Asia/Shanghai", calendar.timezone().getId());
+        assertEquals(45, calendar.defaultDurationMinutes());
+        assertEquals(10, calendar.defaultReminderMinutes());
+        assertEquals(java.time.Duration.ofSeconds(20), calendar.timeout());
+    }
+
+    @Test
+    void feishuCalendarUsesSafeDefaultsWhenEnabled() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path cwd = tempDir.resolve("workspace");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("settings.json"), """
+                {
+                  "provider": "mock",
+                  "model": "mock-model",
+                  "integrations": {
+                    "feishuCalendar": {
+                      "enabled": true
+                    }
+                  }
+                }
+                """);
+
+        RuntimeConfig config = RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(home, cwd, Map.of()));
+        FeishuCalendarConfig calendar = config.integrations().feishuCalendar().orElseThrow();
+
+        assertEquals(FeishuCalendarConfig.DEFAULT_CLI_PATH, calendar.cliPath());
+        assertEquals(FeishuCalendarConfig.DEFAULT_TIMEZONE, calendar.timezone());
+        assertEquals(30, calendar.defaultDurationMinutes());
+        assertEquals(5, calendar.defaultReminderMinutes());
+        assertEquals(java.time.Duration.ofSeconds(30), calendar.timeout());
+    }
+
+    @Test
+    void missingFeishuCalendarConfigurationKeepsIntegrationAbsent() {
+        RuntimeConfig config = RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(
+                tempDir.resolve("home"),
+                tempDir.resolve("workspace"),
+                Map.of("CODEAGENT_PROVIDER", "mock", "CODEAGENT_MODEL", "mock-model")
+        ));
+
+        assertTrue(config.integrations().feishuCalendar().isEmpty());
+    }
+
+    @Test
+    void invalidFeishuCalendarConfigurationFailsWithActionablePath() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path cwd = tempDir.resolve("workspace");
+        Files.createDirectories(home);
+        Files.writeString(home.resolve("settings.json"), """
+                {
+                  "provider": "mock",
+                  "model": "mock-model",
+                  "integrations": {
+                    "feishuCalendar": {
+                      "enabled": true,
+                      "cliPath": "relative/lark-cli",
+                      "timezone": "Not/AZone",
+                      "defaultDurationMinutes": 0
+                    }
+                  }
+                }
+                """);
+
+        RuntimeConfigException exception = assertThrows(RuntimeConfigException.class,
+                () -> RuntimeConfigLoader.load(new RuntimeConfigLoader.Input(home, cwd, Map.of())));
+
+        assertTrue(exception.getMessage().contains("integrations.feishuCalendar"));
+    }
 }

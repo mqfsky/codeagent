@@ -4,5 +4,6 @@ public enum PermissionRequestKind {
     PATH,
     COMMAND,
     EDIT,
-    MCP_TOOL
+    MCP_TOOL,
+    EXTERNAL_ACTION
 }

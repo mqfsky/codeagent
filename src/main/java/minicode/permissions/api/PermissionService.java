@@ -18,6 +18,11 @@ public interface PermissionService {
         throw new UnsupportedOperationException("MCP tool permission is not implemented by this service");
     }
 
+    default PermissionGrant ensureExternalAction(PermissionResource.ExternalActionResource resource,
+                                                 PermissionContext context) {
+        throw new UnsupportedOperationException("External action permission is not implemented by this service");
+    }
+
     default void beginTurn(String turnId) {
     }
 

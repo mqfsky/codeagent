@@ -1,6 +1,6 @@
 # CodeAgent
 
-CodeAgent 是一个使用 Java 21 编写的、本地优先的终端 Coding Agent。
+CodeAgent 是一个使用 Java 21 编写的、本地优先个人助手，软件工程是它的主要能力。
 
 它围绕一条完整的 `模型 -> 工具 -> 模型` 执行链工作：理解用户任务，读取和搜索代码，调用本地工具完成修改或验证，再把工具结果交还给模型继续判断。同时，CodeAgent 提供权限确认、可恢复会话、上下文压缩、项目记忆、Skills 和 MCP 扩展能力。
 
@@ -16,6 +16,7 @@ CodeAgent 是一个使用 Java 21 编写的、本地优先的终端 Coding Agent
 - 支持 `CODEAGENT.md`、`AGENTS.md` 和 `.codeagent/rules/*.md` 分层项目记忆。
 - 支持从项目级、用户级和兼容目录发现 `SKILL.md`，按需加载完整 Skill。
 - 支持通过 stdio 或 Streamable HTTP 连接 MCP Server，并把远端能力注册为 Agent 工具。
+- 可选接入个人飞书主日历，以强类型工具创建私密日程，并在每次外部写入前展示确认信息。
 - 提供全屏 Renderer TUI；终端能力不足时自动回退到普通行模式。
 
 ## 工作流程
@@ -130,6 +131,7 @@ export ANTHROPIC_API_KEY="your-api-key"
 - `maxSteps`：单轮 Agent 最大执行步数。
 - `providerTimeoutSeconds`：模型请求超时时间，默认 300 秒。
 - `mcpServers`：MCP Server 配置。
+- `integrations.feishuCalendar`：用户级飞书日历创建工具配置。
 
 配置加载优先级为：
 
@@ -142,7 +144,57 @@ export ANTHROPIC_API_KEY="your-api-key"
 
 建议把 API Key 放在用户级配置或环境变量中，不要把真实密钥提交到 Git。
 
-### 2. 在目标项目中启动
+### 2. 配置飞书日历（可选）
+
+飞书日历集成只从用户级 `~/.codeagent/settings.json` 读取，项目配置不能覆盖个人身份、CLI 路径或目标日历：
+
+```json
+{
+  "integrations": {
+    "feishuCalendar": {
+      "enabled": true,
+      "cliPath": "/opt/homebrew/bin/lark-cli",
+      "timezone": "Asia/Shanghai",
+      "defaultDurationMinutes": 30,
+      "defaultReminderMinutes": 5,
+      "timeoutSeconds": 30
+    }
+  }
+}
+```
+
+该功能固定使用当前用户的飞书主日历和 `--as user` 身份，不接受模型提供的 `calendarId`、时区、身份或原始 CLI 参数。每次创建前都会展示标题、起止时间、时区和提醒信息，只支持单次允许，不支持永久放行。
+
+飞书应用至少需要以下用户权限：
+
+```text
+calendar:calendar:readonly
+calendar:calendar.event:create
+offline_access
+```
+
+授权示例：
+
+```bash
+/opt/homebrew/bin/lark-cli auth login \
+  --scope "calendar:calendar:readonly calendar:calendar.event:create offline_access" \
+  --no-wait \
+  --json
+```
+
+用户完成 split-flow 登录后，需要用明确的创建指令，例如：
+
+```text
+帮我创建日程：明天九点看八股文
+创建飞书日程：后天晚上八点复习数据库
+添加到飞书日历：9月10日下午三点整理面试笔记
+```
+
+普通的计划或意图陈述（例如“明天九点我要看八股文”或“明天要复习项目，刷算法，完善简历”）不会创建日程，也不会触发日程信息补问。只有明确要求创建、添加或安排日程时才会进入创建流程；进入流程后，对 Agent 补问的直接回答不必重复“创建日程”。如果一次创建指令包含多个活动且无法判断应合并还是拆分，Agent 会先询问。
+
+v1 支持今天、明天、后天和月日表达，以及上午、下午、晚上、凌晨和裸 24 小时时刻。明确创建请求缺少标题、日期或具体时间时会先询问；暂不支持重复日程、参与人、修改、删除及“下周一”“月底”等扩展表达。
+
+### 3. 在目标项目中启动
 
 进入希望 Agent 操作的项目目录，然后使用 CodeAgent 的绝对路径启动：
 

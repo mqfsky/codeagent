@@ -45,6 +45,10 @@ public record PermissionResourceKey(String type, String fingerprint) {
                     mcpToolResource.serverName() + "|" + mcpToolResource.toolName()
                             + "|" + mcpToolResource.wrappedName()
             );
+            case PermissionResource.ExternalActionResource externalActionResource -> new PermissionResourceKey(
+                    "external_action",
+                    externalActionResource.fingerprint()
+            );
         };
     }
 

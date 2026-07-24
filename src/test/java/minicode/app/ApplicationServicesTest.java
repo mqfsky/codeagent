@@ -1,6 +1,8 @@
 package minicode.app;
 
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import minicode.config.FeishuCalendarConfig;
+import minicode.config.IntegrationsConfig;
 import minicode.config.ProviderKind;
 import minicode.config.RuntimeConfig;
 import minicode.context.compact.CompactMetadata;
@@ -104,6 +106,58 @@ class ApplicationServicesTest {
         assertNotNull(services.sessionPersistenceRunner());
         assertNotNull(services.agentLoop());
         assertNotNull(services.workspacePathResolver());
+    }
+
+    @Test
+    void enabledUserCalendarIntegrationRegistersParentOnlyExternalWriteToolAndPromptRules() {
+        RuntimeConfig runtimeConfig = runtimeConfigWithCalendar(true);
+        ApplicationServices services = ApplicationServices.create(
+                tempDir.resolve("home-calendar"),
+                tempDir.resolve("workspace-calendar"),
+                "session-calendar",
+                runtimeConfig,
+                new MockModelAdapter("done"),
+                event -> {
+                },
+                PermissionPromptHandler.unavailable()
+        );
+        try {
+            Tool calendar = services.toolRegistry()
+                    .find("create_feishu_calendar_event")
+                    .orElseThrow();
+            String prompt = ((SystemMessage) services.turnRequest(
+                    List.of(new UserMessage("hello")), 3).messages().getFirst()).content();
+
+            assertEquals(ToolOrigin.EXTENSION, calendar.metadata().origin());
+            assertEquals(Set.of(ToolCapability.EXTERNAL_WRITE), calendar.metadata().capabilities());
+            assertTrue(prompt.contains("Feishu calendar rules:"));
+            assertTrue(prompt.contains("create_feishu_calendar_event"));
+        } finally {
+            services.close();
+        }
+    }
+
+    @Test
+    void disabledUserCalendarIntegrationDoesNotExposeCalendarTool() {
+        ApplicationServices services = ApplicationServices.create(
+                tempDir.resolve("home-calendar-disabled"),
+                tempDir.resolve("workspace-calendar-disabled"),
+                "session-calendar-disabled",
+                runtimeConfigWithCalendar(false),
+                new MockModelAdapter("done"),
+                event -> {
+                },
+                PermissionPromptHandler.unavailable()
+        );
+        try {
+            String prompt = ((SystemMessage) services.turnRequest(
+                    List.of(new UserMessage("hello")), 3).messages().getFirst()).content();
+
+            assertTrue(services.toolRegistry().find("create_feishu_calendar_event").isEmpty());
+            assertFalse(prompt.contains("Feishu calendar rules:"));
+        } finally {
+            services.close();
+        }
     }
 
     @Test
@@ -1061,6 +1115,23 @@ class ApplicationServicesTest {
                 home,
                 cwd,
                 "session-1"
+        );
+    }
+
+    private static RuntimeConfig runtimeConfigWithCalendar(boolean enabled) {
+        return new RuntimeConfig(
+                ProviderKind.MOCK,
+                "mock-model",
+                "https://mock.invalid",
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Duration.ofSeconds(30),
+                "test",
+                Map.of(),
+                new IntegrationsConfig(Optional.of(FeishuCalendarConfig.defaults(enabled)))
         );
     }
 

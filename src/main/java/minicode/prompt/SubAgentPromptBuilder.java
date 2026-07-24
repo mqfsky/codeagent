@@ -61,6 +61,8 @@ public final class SubAgentPromptBuilder {
                 Child-agent boundaries:
                 - Do not delegate to another agent and do not create or manage background tasks.
                 - Do not ask the user questions. Make a reasonable in-scope assumption or report a concrete blocker.
+                - Do not use run_command or MCP tools to write to external services. Return any requested
+                  calendar, messaging, email, or other external side effect to the parent agent.
                 - Do not claim an unavailable or failed operation succeeded.
                 - Parent chat history, project memory, and hidden session state are intentionally unavailable.
                 """.strip() + "\n- " + modeBoundary;

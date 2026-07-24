@@ -61,6 +61,10 @@ final class ToolInputSummarizer {
                     field("name", text(input, "name")),
                     field("skill", text(input, "skill"))
             );
+            case "create_feishu_calendar_event" -> join(
+                    quoteField("title", text(input, "summary")),
+                    quoteField("when", text(input, "originalTimeText"))
+            );
             default -> toolName.startsWith("mcp__") ? summarizeMcp(toolName, input) : compactJson(input);
         };
         return truncate(redact(summary), MAX_TOTAL_CHARS);

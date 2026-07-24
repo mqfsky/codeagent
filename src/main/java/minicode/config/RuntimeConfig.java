@@ -25,19 +25,20 @@ import java.util.Optional;
 public record RuntimeConfig(ProviderKind provider, String model, String baseUrl, Optional<String> apiKey,
                             Optional<String> authToken, Optional<Integer> maxOutputTokens,
                             Optional<Integer> contextWindow, Optional<Integer> maxSteps,
-                            Duration providerTimeout, String sourceSummary, Map<String, McpServerConfig> mcpServers) {
+                            Duration providerTimeout, String sourceSummary, Map<String, McpServerConfig> mcpServers,
+                            IntegrationsConfig integrations) {
     public RuntimeConfig(ProviderKind provider, String model, String baseUrl, Optional<String> apiKey,
                          Optional<String> authToken, Optional<Integer> maxOutputTokens,
                          Optional<Integer> contextWindow, String sourceSummary) {
         this(provider, model, baseUrl, apiKey, authToken, maxOutputTokens, contextWindow, Optional.empty(),
-                Duration.ofSeconds(300), sourceSummary, Map.of());
+                Duration.ofSeconds(300), sourceSummary, Map.of(), IntegrationsConfig.empty());
     }
 
     public RuntimeConfig(ProviderKind provider, String model, String baseUrl, Optional<String> apiKey,
                          Optional<String> authToken, Optional<Integer> maxOutputTokens,
                          Optional<Integer> contextWindow, Duration providerTimeout, String sourceSummary) {
         this(provider, model, baseUrl, apiKey, authToken, maxOutputTokens, contextWindow, Optional.empty(),
-                providerTimeout, sourceSummary, Map.of());
+                providerTimeout, sourceSummary, Map.of(), IntegrationsConfig.empty());
     }
 
     public RuntimeConfig(ProviderKind provider, String model, String baseUrl, Optional<String> apiKey,
@@ -45,13 +46,22 @@ public record RuntimeConfig(ProviderKind provider, String model, String baseUrl,
                          Optional<Integer> contextWindow, String sourceSummary,
                          Map<String, McpServerConfig> mcpServers) {
         this(provider, model, baseUrl, apiKey, authToken, maxOutputTokens, contextWindow, Optional.empty(),
-                Duration.ofSeconds(300), sourceSummary, mcpServers);
+                Duration.ofSeconds(300), sourceSummary, mcpServers, IntegrationsConfig.empty());
     }
 
     public RuntimeConfig(ProviderKind provider, String model, String baseUrl, Optional<String> apiKey,
                          Optional<String> authToken, Optional<Integer> maxOutputTokens,
                          Optional<Integer> contextWindow, Optional<Integer> maxSteps,
                          Duration providerTimeout, String sourceSummary, Map<String, McpServerConfig> mcpServers) {
+        this(provider, model, baseUrl, apiKey, authToken, maxOutputTokens, contextWindow, maxSteps,
+                providerTimeout, sourceSummary, mcpServers, IntegrationsConfig.empty());
+    }
+
+    public RuntimeConfig(ProviderKind provider, String model, String baseUrl, Optional<String> apiKey,
+                         Optional<String> authToken, Optional<Integer> maxOutputTokens,
+                         Optional<Integer> contextWindow, Optional<Integer> maxSteps,
+                         Duration providerTimeout, String sourceSummary, Map<String, McpServerConfig> mcpServers,
+                         IntegrationsConfig integrations) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.model = requireText(model, "model");
         this.baseUrl = requireText(baseUrl, "baseUrl");
@@ -63,6 +73,7 @@ public record RuntimeConfig(ProviderKind provider, String model, String baseUrl,
         this.providerTimeout = requirePositive(providerTimeout, "providerTimeout");
         this.sourceSummary = requireText(sourceSummary, "sourceSummary");
         this.mcpServers = Map.copyOf(Objects.requireNonNull(mcpServers, "mcpServers"));
+        this.integrations = Objects.requireNonNull(integrations, "integrations");
     }
 
     private static String requireText(String value, String name) {

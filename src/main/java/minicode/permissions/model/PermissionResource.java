@@ -3,11 +3,13 @@ package minicode.permissions.model;
 import minicode.edit.EditReview;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
 public sealed interface PermissionResource permits PermissionResource.PathResource,
-        PermissionResource.CommandResource, PermissionResource.EditResource, PermissionResource.McpToolResource {
+        PermissionResource.CommandResource, PermissionResource.EditResource, PermissionResource.McpToolResource,
+        PermissionResource.ExternalActionResource {
     /**
      * 路径访问权限资源。
      *
@@ -110,6 +112,33 @@ public sealed interface PermissionResource permits PermissionResource.PathResour
             toolName = requireText(toolName, "toolName");
             wrappedName = requireText(wrappedName, "wrappedName");
             description = Objects.requireNonNull(description, "description");
+        }
+
+        private static String requireText(String value, String name) {
+            if (Objects.requireNonNull(value, name).isBlank()) {
+                throw new IllegalArgumentException(name + " must not be blank");
+            }
+            return value;
+        }
+    }
+
+    /**
+     * 会写入外部服务的动作权限资源。
+     *
+     * @param service 外部服务名称
+     * @param action 动作名称
+     * @param target 动作目标
+     * @param fingerprint 本次动作的显式指纹
+     * @param facts 展示给用户的补充事实
+     */
+    record ExternalActionResource(String service, String action, String target, String fingerprint,
+                                  List<String> facts) implements PermissionResource {
+        public ExternalActionResource {
+            service = requireText(service, "service");
+            action = requireText(action, "action");
+            target = requireText(target, "target");
+            fingerprint = requireText(fingerprint, "fingerprint");
+            facts = List.copyOf(Objects.requireNonNull(facts, "facts"));
         }
 
         private static String requireText(String value, String name) {

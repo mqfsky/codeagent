@@ -84,6 +84,31 @@ public final class PromptingPermissionService implements PermissionService {
         return ensure(request, PermissionKind.MCP_TOOL);
     }
 
+    @Override
+    public PermissionGrant ensureExternalAction(PermissionResource.ExternalActionResource resource,
+                                                PermissionContext context) {
+        PermissionRequest request = request(
+                PermissionRequestKind.EXTERNAL_ACTION,
+                Objects.requireNonNull(resource, "resource"),
+                "Allow external action",
+                context
+        );
+        // 外部副作用必须逐次审查，不能被持久授权或 turn 级缓存绕过。
+        return ensureOneShot(request, PermissionKind.EXTERNAL_ACTION);
+    }
+
+    private PermissionGrant ensureOneShot(PermissionRequest request, PermissionKind kind) {
+        PermissionPromptResult result = Objects.requireNonNull(promptHandler.prompt(request), "prompt result");
+        PermissionChoice choice = choiceFor(request, result);
+        if (choice.decision() != result.decision()) {
+            throw new IllegalArgumentException("Permission choice decision does not match prompt result decision");
+        }
+        if (choice.decision() != PermissionDecision.ALLOW_ONCE) {
+            throw new PermissionDeniedException(request, Optional.of(choice.key()), result.feedback());
+        }
+        return grant(kind, request.resource(), PermissionGrantScope.ONCE, PermissionPersistence.MEMORY);
+    }
+
     /**
      * 对一次完整的权限请求做最终裁决：能直接放行就返回 PermissionGrant，不能放行就问用户，用户拒绝就抛 PermissionDeniedException。
      * @param request 请求
@@ -257,10 +282,22 @@ public final class PromptingPermissionService implements PermissionService {
                             "Description: " + mcpToolResource.description()
                     )
             );
+            case PermissionResource.ExternalActionResource externalActionResource -> new PermissionRequestDetails(
+                    "External action",
+                    "The model requested an action that writes to an external service.",
+                    externalActionFacts(externalActionResource)
+            );
         };
     }
 
     private static List<PermissionChoice> choicesFor(PermissionResource resource) {
+        if (resource instanceof PermissionResource.ExternalActionResource) {
+            return List.of(
+                    PermissionChoice.allowOnce("allow_once", "Allow this external action"),
+                    PermissionChoice.denyOnce("deny_once", "Deny"),
+                    PermissionChoice.denyWithFeedback("deny_feedback", "Deny with feedback")
+            );
+        }
         if (resource instanceof PermissionResource.EditResource) {
             return List.of(
                     PermissionChoice.allowOnce("allow_once", "Allow this edit"),
@@ -288,7 +325,19 @@ public final class PromptingPermissionService implements PermissionService {
                             : "Allow this path this turn";
             case PermissionResource.EditResource ignored -> "Allow this edit target this turn";
             case PermissionResource.McpToolResource ignored -> "Allow this MCP tool this turn";
+            case PermissionResource.ExternalActionResource ignored ->
+                    throw new IllegalArgumentException("External actions do not support turn-scoped approval");
         };
+    }
+
+    private static List<String> externalActionFacts(
+            PermissionResource.ExternalActionResource externalActionResource) {
+        List<String> facts = new java.util.ArrayList<>();
+        facts.add("Service: " + externalActionResource.service());
+        facts.add("Action: " + externalActionResource.action());
+        facts.add("Target: " + externalActionResource.target());
+        facts.addAll(externalActionResource.facts());
+        return facts;
     }
 
     private static List<String> editFacts(PermissionResource.EditResource editResource) {

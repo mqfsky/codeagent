@@ -73,6 +73,22 @@ class PermissionStoreTest {
     }
 
     @Test
+    void externalActionResourceKeyUsesTheExplicitFingerprint() {
+        PermissionResource.ExternalActionResource resource = new PermissionResource.ExternalActionResource(
+                "feishu",
+                "append_blocks",
+                "doc-123",
+                "sha256:explicit-fingerprint",
+                List.of("Blocks: 2")
+        );
+
+        PermissionResourceKey key = PermissionResourceKey.from(resource);
+
+        assertEquals("external_action", key.type());
+        assertEquals("sha256:explicit-fingerprint", key.fingerprint());
+    }
+
+    @Test
     void missingStoreFileStartsEmpty() {
         JsonPermissionStore store = new JsonPermissionStore(tempDir.resolve("permissions.json"));
 

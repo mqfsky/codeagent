@@ -43,7 +43,8 @@ class SystemPromptBuilderTest {
 
         String prompt = new SystemPromptBuilder().build(new SystemPromptBuilder.Input(home, cwd, registry));
 
-        assertTrue(prompt.contains("You are mini-code, a terminal coding assistant."));
+        assertTrue(prompt.contains(
+                "You are CodeAgent, a personal assistant whose primary capability is software engineering."));
         assertTrue(prompt.contains("Default behavior: inspect the repository, use tools, make code changes when appropriate, and explain results clearly."));
         assertTrue(prompt.contains("Prefer reading files, searching code, editing files, and running verification commands over giving purely theoretical advice."));
         assertTrue(prompt.contains("Current cwd: " + cwd.toAbsolutePath().normalize()));
@@ -272,6 +273,40 @@ class SystemPromptBuilderTest {
         assertFalse(prompt.contains("must-not-be-partially-injected"));
     }
 
+    @Test
+    void promptAddsCalendarIntentRulesOnlyWhenCalendarToolIsAvailable() throws Exception {
+        Path home = tempDir.resolve("home");
+        Path cwd = tempDir.resolve("workspace");
+        Files.createDirectories(home);
+        Files.createDirectories(cwd);
+        ToolRegistry withoutCalendar = new ToolRegistry();
+        ToolRegistry withCalendar = new ToolRegistry();
+        withCalendar.register(new CalendarFakeTool());
+
+        String basePrompt = new SystemPromptBuilder().build(
+                new SystemPromptBuilder.Input(home, cwd, withoutCalendar));
+        String calendarPrompt = new SystemPromptBuilder().build(
+                new SystemPromptBuilder.Input(home, cwd, withCalendar));
+
+        assertFalse(basePrompt.contains("Feishu calendar rules:"));
+        assertTrue(calendarPrompt.contains("Feishu calendar rules:"));
+        assertTrue(calendarPrompt.contains("only when the user explicitly asks or commands"));
+        assertTrue(calendarPrompt.contains("\"帮我创建日程\""));
+        assertTrue(calendarPrompt.contains("A capability question such as \"你会创建飞书日程吗\" does not"));
+        assertTrue(calendarPrompt.contains("A plain statement of intent or a plan is not a calendar creation request"));
+        assertTrue(calendarPrompt.contains("\"明天要复习项目，刷算法，完善简历\""));
+        assertTrue(calendarPrompt.contains("must not trigger create_feishu_calendar_event or calendar clarification"));
+        assertTrue(calendarPrompt.contains("A negated or cancelled request"));
+        assertTrue(calendarPrompt.contains("only a direct answer to its ask_user clarification continues that flow"));
+        assertTrue(calendarPrompt.contains("switches to an unrelated task"));
+        assertTrue(calendarPrompt.contains("Never let a later ordinary plan inherit an old creation request"));
+        assertTrue(calendarPrompt.contains("whether they should be one event or separate events"));
+        assertFalse(calendarPrompt.contains("Treat a first-person statement about a concrete future activity"));
+        assertTrue(calendarPrompt.contains("A bare hour such as nine means 09:00."));
+        assertTrue(calendarPrompt.contains("The external-action permission preview is the creation confirmation."));
+        assertTrue(calendarPrompt.contains("do not calculate a concrete calendar date for relative expressions"));
+    }
+
     private static McpServerSummary connectedSummary(String name, String instructions) {
         return new McpServerSummary(name, name, McpServerStatus.CONNECTED, 0,
                 Optional.empty(), Optional.empty(), Optional.of(instructions));
@@ -295,6 +330,32 @@ class SystemPromptBuilderTest {
         public ToolMetadata metadata() {
             return new ToolMetadata("fake_tool", "Fake tool description", SCHEMA,
                     ToolOrigin.BUILTIN, Set.of(ToolCapability.READ), ToolStatus.AVAILABLE);
+        }
+
+        @Override
+        public ObjectNode inputSchema() {
+            return SCHEMA;
+        }
+
+        @Override
+        public ValidationResult validateInput(com.fasterxml.jackson.databind.JsonNode input) {
+            return ValidationResult.valid(input);
+        }
+
+        @Override
+        public ToolResult run(com.fasterxml.jackson.databind.JsonNode normalizedInput, ToolContext toolContext) {
+            return ToolResult.ok("ok");
+        }
+    }
+
+    private static final class CalendarFakeTool implements Tool {
+        private static final ObjectNode SCHEMA = JsonNodeFactory.instance.objectNode()
+                .put("type", "object");
+
+        @Override
+        public ToolMetadata metadata() {
+            return new ToolMetadata("create_feishu_calendar_event", "Create a Feishu calendar event", SCHEMA,
+                    ToolOrigin.EXTENSION, Set.of(ToolCapability.COMMAND), ToolStatus.AVAILABLE);
         }
 
         @Override

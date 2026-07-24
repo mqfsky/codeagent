@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -91,6 +92,8 @@ public final class RuntimeConfigLoader {
                 "CODEAGENT_PROVIDER_TIMEOUT_SECONDS", "providerTimeoutSeconds", ""));
         // 合并用户级与工作区级 MCP Server 配置，工作区中的同名配置优先。
         Map<String, McpServerConfig> mcpServers = mcpServers(homeSettings, cwdSettings, input.env());
+        // 个人外部集成只允许由用户级配置声明，工作区不能替换个人身份或目标。
+        IntegrationsConfig integrations = integrations(homeSettings);
 
         // 模型名称是运行必需项，所有来源都没有配置时立即终止启动。
         if (model.isBlank()) {
@@ -117,8 +120,70 @@ public final class RuntimeConfigLoader {
                         + "; cwdSettings=" + cwdSettingsPath
                         + "; env"
                 ,
-                mcpServers
+                mcpServers,
+                integrations
         );
+    }
+
+    private static IntegrationsConfig integrations(JsonNode homeSettings) {
+        JsonNode integrations = homeSettings == null ? null : homeSettings.get("integrations");
+        JsonNode calendar = integrations == null || !integrations.isObject()
+                ? null
+                : integrations.get("feishuCalendar");
+        if (calendar == null || !calendar.isObject()) {
+            return IntegrationsConfig.empty();
+        }
+
+        try {
+            boolean enabled = calendar.path("enabled").asBoolean(false);
+            String cliPath = optionalSetting(calendar, "cliPath",
+                    FeishuCalendarConfig.DEFAULT_CLI_PATH.toString());
+            String timezone = optionalSetting(calendar, "timezone",
+                    FeishuCalendarConfig.DEFAULT_TIMEZONE.getId());
+            int defaultDurationMinutes = optionalInteger(calendar, "defaultDurationMinutes",
+                    FeishuCalendarConfig.DEFAULT_DURATION_MINUTES);
+            int defaultReminderMinutes = optionalInteger(calendar, "defaultReminderMinutes",
+                    FeishuCalendarConfig.DEFAULT_REMINDER_MINUTES);
+            int timeoutSeconds = optionalInteger(calendar, "timeoutSeconds",
+                    Math.toIntExact(FeishuCalendarConfig.DEFAULT_TIMEOUT.toSeconds()));
+            FeishuCalendarConfig config = new FeishuCalendarConfig(
+                    enabled,
+                    Path.of(cliPath),
+                    ZoneId.of(timezone),
+                    defaultDurationMinutes,
+                    defaultReminderMinutes,
+                    Duration.ofSeconds(timeoutSeconds)
+            );
+            return new IntegrationsConfig(Optional.of(config));
+        } catch (RuntimeException exception) {
+            throw new RuntimeConfigException("Invalid integrations.feishuCalendar configuration: "
+                    + messageOrType(exception), exception);
+        }
+    }
+
+    private static String optionalSetting(JsonNode object, String name, String fallback) {
+        String value = settingsText(object, name);
+        return value.isBlank() ? fallback : value;
+    }
+
+    private static int optionalInteger(JsonNode object, String name, int fallback) {
+        JsonNode value = object.get(name);
+        if (value == null || value.isNull()) {
+            return fallback;
+        }
+        if (!value.canConvertToInt() && !value.isTextual()) {
+            throw new IllegalArgumentException(name + " must be an integer");
+        }
+        try {
+            return Integer.parseInt(value.asText().trim());
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(name + " must be an integer", exception);
+        }
+    }
+
+    private static String messageOrType(RuntimeException exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
     private static Map<String, McpServerConfig> mcpServers(JsonNode homeSettings, JsonNode cwdSettings,
