@@ -1,8 +1,16 @@
-package minicode.model.anthropic;
+package minicode.model.langchain4j;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import dev.langchain4j.exception.HttpException;
+import dev.langchain4j.http.client.HttpClient;
+import dev.langchain4j.http.client.HttpClientBuilder;
+import dev.langchain4j.http.client.HttpRequest;
+import dev.langchain4j.http.client.SuccessfulHttpResponse;
+import dev.langchain4j.http.client.sse.ServerSentEventListener;
+import dev.langchain4j.http.client.sse.ServerSentEventParser;
+import dev.langchain4j.model.anthropic.AnthropicChatModel;
 import minicode.config.ProviderKind;
 import minicode.config.RuntimeConfig;
 import minicode.context.accounting.TokenAccountingService;
@@ -34,6 +42,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +51,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class AnthropicAgentLoopSemanticsTest {
+class LangChain4jAgentLoopSemanticsTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @TempDir
@@ -51,10 +60,15 @@ class AnthropicAgentLoopSemanticsTest {
     @Test
     void fixtureRunsToolUseToolResultContinueFinalWithUsageAndContextStats() {
         ToolRegistry registry = registry(new EchoTool(false));
-        SequenceTransport transport = new SequenceTransport(
+        SequenceHttpClientBuilder http = new SequenceHttpClientBuilder(
                 ok("""
                         {
+                          "id": "msg-tool",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "tool_use",
+                          "stop_sequence": null,
                           "content": [
                             {"type": "text", "text": "<progress>checking echo</progress>"},
                             {"type": "tool_use", "id": "tool-1", "name": "echo_fixture", "input": {"text": "hello"}}
@@ -64,7 +78,12 @@ class AnthropicAgentLoopSemanticsTest {
                         """),
                 ok("""
                         {
+                          "id": "msg-final",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "end_turn",
+                          "stop_sequence": null,
                           "content": [
                             {"type": "text", "text": "<final>echo complete</final>"}
                           ],
@@ -74,24 +93,29 @@ class AnthropicAgentLoopSemanticsTest {
         );
         RecordingEventSink eventSink = new RecordingEventSink();
         AgentLoop loop = new AgentLoop(
-                new AnthropicModelAdapter(config(), registry, transport, 0),
+                adapter(registry, http),
                 eventSink,
                 registry,
                 minicode.context.manager.ContextManager.noOp(),
                 new ContextStatsCalculator(new TokenAccountingService(), new ModelContextWindow(160, 40))
         );
 
-        AgentTurnResult result = loop.runTurn(request(List.of(new SystemMessage("sys"), new UserMessage("use tool"))));
+        AgentTurnResult result = loop.runTurn(request(List.of(
+                new SystemMessage("sys"),
+                new UserMessage("use tool"))));
 
         assertEquals(AgentTurnStopReason.FINAL, result.stopReason());
-        assertEquals(2, transport.calls);
+        assertEquals(2, http.calls);
         assertInstanceOf(AssistantProgressMessage.class, result.messages().get(2));
         assertInstanceOf(UserMessage.class, result.messages().get(3));
-        AssistantToolCallMessage toolCall = assertInstanceOf(AssistantToolCallMessage.class, result.messages().get(4));
+        AssistantToolCallMessage toolCall =
+                assertInstanceOf(AssistantToolCallMessage.class, result.messages().get(4));
         assertEquals(new ProviderUsage(10, 5, 15), toolCall.providerUsage().orElseThrow());
-        ToolResultMessage toolResult = assertInstanceOf(ToolResultMessage.class, result.messages().get(5));
+        ToolResultMessage toolResult =
+                assertInstanceOf(ToolResultMessage.class, result.messages().get(5));
         assertEquals("echo: hello", toolResult.content());
-        AssistantMessage finalMessage = assertInstanceOf(AssistantMessage.class, result.messages().getLast());
+        AssistantMessage finalMessage =
+                assertInstanceOf(AssistantMessage.class, result.messages().getLast());
         assertEquals("echo complete", finalMessage.content());
         assertEquals(new ProviderUsage(30, 7, 37), finalMessage.providerUsage().orElseThrow());
 
@@ -108,10 +132,15 @@ class AnthropicAgentLoopSemanticsTest {
     @Test
     void fixtureGroupsMultipleToolUsesThenMultipleToolResultsForProviderRequest() {
         ToolRegistry registry = registry(new EchoTool(false));
-        RecordingSequenceTransport transport = new RecordingSequenceTransport(
+        SequenceHttpClientBuilder http = new SequenceHttpClientBuilder(
                 ok("""
                         {
+                          "id": "msg-tools",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "tool_use",
+                          "stop_sequence": null,
                           "content": [
                             {"type": "tool_use", "id": "tool-1", "name": "echo_fixture", "input": {"text": "one"}},
                             {"type": "tool_use", "id": "tool-2", "name": "echo_fixture", "input": {"text": "two"}}
@@ -121,7 +150,12 @@ class AnthropicAgentLoopSemanticsTest {
                         """),
                 ok("""
                         {
+                          "id": "msg-final",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "end_turn",
+                          "stop_sequence": null,
                           "content": [
                             {"type": "text", "text": "<final>both complete</final>"}
                           ],
@@ -129,128 +163,141 @@ class AnthropicAgentLoopSemanticsTest {
                         }
                         """)
         );
-        AgentLoop loop = new AgentLoop(new AnthropicModelAdapter(config(), registry, transport, 0),
-                AgentEventSink.noOp(), registry);
+        AgentLoop loop = new AgentLoop(adapter(registry, http), AgentEventSink.noOp(), registry);
 
         AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("use two tools"))));
 
         assertEquals(AgentTurnStopReason.FINAL, result.stopReason());
-        JsonNode providerMessages = transport.requestBodies.get(1).get("messages");
-        assertEquals("user", providerMessages.get(0).get("role").asText());
-        assertEquals("assistant", providerMessages.get(1).get("role").asText());
-        assertEquals("tool_use", providerMessages.get(1).get("content").get(0).get("type").asText());
-        assertEquals("tool_use", providerMessages.get(1).get("content").get(1).get("type").asText());
-        assertEquals("tool-1", providerMessages.get(1).get("content").get(0).get("id").asText());
-        assertEquals("tool-2", providerMessages.get(1).get("content").get(1).get("id").asText());
-        assertEquals("user", providerMessages.get(2).get("role").asText());
-        assertEquals("tool_result", providerMessages.get(2).get("content").get(0).get("type").asText());
-        assertEquals("tool_result", providerMessages.get(2).get("content").get(1).get("type").asText());
-        assertEquals("tool-1", providerMessages.get(2).get("content").get(0).get("tool_use_id").asText());
-        assertEquals("tool-2", providerMessages.get(2).get("content").get(1).get("tool_use_id").asText());
+        assertMultiToolRequestShape(http.requestBodies.get(1).path("messages"));
     }
 
     @Test
     void fixturePreservesMultiToolHistoryShapeAcrossSessionResumeRoundTrip() {
         SessionStore store = new SessionStore(tempDir);
-        SessionPersistenceRunner runner = new SessionPersistenceRunner(store,
+        SessionPersistenceRunner runner = new SessionPersistenceRunner(
+                store,
                 new SessionEventFactory("session-1", "E:/work"));
         runner.apply(new TurnPersistencePlan(List.of(
                 new PersistenceAction.AppendMessagesAction(List.of(
                         new UserMessage("use two tools"),
-                        new AssistantToolCallMessage("tool-1", "echo_fixture",
+                        new AssistantToolCallMessage(
+                                "tool-1",
+                                "echo_fixture",
                                 JsonNodeFactory.instance.objectNode().put("text", "one"),
                                 Optional.of(new ProviderUsage(8, 4, 12)),
                                 minicode.model.UsageStaleness.fresh()),
-                        new AssistantToolCallMessage("tool-2", "echo_fixture",
+                        new AssistantToolCallMessage(
+                                "tool-2",
+                                "echo_fixture",
                                 JsonNodeFactory.instance.objectNode().put("text", "two")),
                         new ToolResultMessage("tool-1", "echo_fixture", "echo: one", false),
                         new ToolResultMessage("tool-2", "echo_fixture", "echo: two", false)
                 ))
         )));
-        List<ChatMessage> resumedMessages = new SessionService(store).resumeMessages("E:/work", "session-1");
+        List<ChatMessage> resumedMessages =
+                new SessionService(store).resumeMessages("E:/work", "session-1");
         ToolRegistry registry = registry(new EchoTool(false));
-        RecordingSequenceTransport transport = new RecordingSequenceTransport(ok("""
+        SequenceHttpClientBuilder http = new SequenceHttpClientBuilder(ok("""
                 {
+                  "id": "msg-resumed",
+                  "type": "message",
+                  "role": "assistant",
+                  "model": "claude-test",
                   "stop_reason": "end_turn",
+                  "stop_sequence": null,
                   "content": [
                     {"type": "text", "text": "<final>resumed</final>"}
-                  ]
+                  ],
+                  "usage": {"input_tokens": 1, "output_tokens": 1}
                 }
                 """));
-        AnthropicModelAdapter adapter = new AnthropicModelAdapter(config(), registry, transport, 0);
 
-        adapter.next(resumedMessages);
+        adapter(registry, http).next(resumedMessages);
 
-        JsonNode providerMessages = transport.requestBodies.getFirst().get("messages");
-        assertEquals("user", providerMessages.get(0).get("role").asText());
-        assertEquals("assistant", providerMessages.get(1).get("role").asText());
-        assertEquals("tool_use", providerMessages.get(1).get("content").get(0).get("type").asText());
-        assertEquals("tool_use", providerMessages.get(1).get("content").get(1).get("type").asText());
-        assertEquals("tool-1", providerMessages.get(1).get("content").get(0).get("id").asText());
-        assertEquals("tool-2", providerMessages.get(1).get("content").get(1).get("id").asText());
-        assertEquals("user", providerMessages.get(2).get("role").asText());
-        assertEquals("tool_result", providerMessages.get(2).get("content").get(0).get("type").asText());
-        assertEquals("tool_result", providerMessages.get(2).get("content").get(1).get("type").asText());
-        assertEquals("tool-1", providerMessages.get(2).get("content").get(0).get("tool_use_id").asText());
-        assertEquals("tool-2", providerMessages.get(2).get("content").get(1).get("tool_use_id").asText());
+        assertMultiToolRequestShape(http.requestBodies.getFirst().path("messages"));
     }
 
     @Test
     void fixtureUsesAgentLoopEmptyResponseFallbackAfterRecentToolError() {
         ToolRegistry registry = registry(new EchoTool(true));
-        SequenceTransport transport = new SequenceTransport(
+        SequenceHttpClientBuilder http = new SequenceHttpClientBuilder(
                 ok("""
                         {
+                          "id": "msg-tool",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "tool_use",
+                          "stop_sequence": null,
                           "content": [
                             {"type": "tool_use", "id": "tool-1", "name": "echo_fixture", "input": {"text": "fail"}}
                           ],
                           "usage": {"input_tokens": 3, "output_tokens": 2}
                         }
                         """),
-                ok("{\"stop_reason\": \"end_turn\", \"content\": []}"),
-                ok("{\"stop_reason\": \"end_turn\", \"content\": []}"),
-                ok("{\"stop_reason\": \"end_turn\", \"content\": []}")
+                emptyResponse("msg-empty-1"),
+                emptyResponse("msg-empty-2"),
+                emptyResponse("msg-empty-3")
         );
-        AgentLoop loop = new AgentLoop(new AnthropicModelAdapter(config(), registry, transport, 0),
-                AgentEventSink.noOp(), registry);
+        AgentLoop loop = new AgentLoop(adapter(registry, http), AgentEventSink.noOp(), registry);
 
-        AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("use failing tool"))));
+        AgentTurnResult result =
+                loop.runTurn(request(List.of(new UserMessage("use failing tool"))));
 
         assertEquals(AgentTurnStopReason.EMPTY_RESPONSE_FALLBACK, result.stopReason());
-        EmptyFallbackDetails details = assertInstanceOf(EmptyFallbackDetails.class, result.stopDetails().orElseThrow());
+        assertEquals(4, http.calls);
+        EmptyFallbackDetails details =
+                assertInstanceOf(EmptyFallbackDetails.class, result.stopDetails().orElseThrow());
         assertEquals(Optional.of("empty_after_tool_error"), details.reason());
         assertEquals(1, details.toolErrorCount());
         assertTrue(result.messages().stream().anyMatch(message ->
                 message instanceof UserMessage user
                         && user.content().contains("recent tool results that included errors")));
-        AssistantMessage fallback = assertInstanceOf(AssistantMessage.class, result.messages().getLast());
+        AssistantMessage fallback =
+                assertInstanceOf(AssistantMessage.class, result.messages().getLast());
         assertTrue(fallback.content().contains("tool error"));
     }
 
     @Test
     void fixtureRecoversPauseTurnAndMaxTokensThinkingStops() {
         ToolRegistry registry = registry(new EchoTool(false));
-        SequenceTransport transport = new SequenceTransport(
+        SequenceHttpClientBuilder http = new SequenceHttpClientBuilder(
                 ok("""
                         {
+                          "id": "msg-pause",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "pause_turn",
+                          "stop_sequence": null,
                           "content": [
-                            {"type": "thinking", "thinking": "need more time"}
-                          ]
+                            {"type": "thinking", "thinking": "need more time", "signature": "sig-1"}
+                          ],
+                          "usage": {"input_tokens": 1, "output_tokens": 1}
                         }
                         """),
                 ok("""
                         {
+                          "id": "msg-max",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "max_tokens",
+                          "stop_sequence": null,
                           "content": [
                             {"type": "redacted_thinking", "data": "opaque"}
-                          ]
+                          ],
+                          "usage": {"input_tokens": 2, "output_tokens": 2}
                         }
                         """),
                 ok("""
                         {
+                          "id": "msg-final",
+                          "type": "message",
+                          "role": "assistant",
+                          "model": "claude-test",
                           "stop_reason": "end_turn",
+                          "stop_sequence": null,
                           "content": [
                             {"type": "text", "text": "<final>recovered</final>"}
                           ],
@@ -258,13 +305,13 @@ class AnthropicAgentLoopSemanticsTest {
                         }
                         """)
         );
-        AgentLoop loop = new AgentLoop(new AnthropicModelAdapter(config(), registry, transport, 0),
-                AgentEventSink.noOp(), registry);
+        AgentLoop loop = new AgentLoop(adapter(registry, http), AgentEventSink.noOp(), registry);
 
-        AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("think then finish"))));
+        AgentTurnResult result =
+                loop.runTurn(request(List.of(new UserMessage("think then finish"))));
 
         assertEquals(AgentTurnStopReason.FINAL, result.stopReason());
-        assertEquals(3, transport.calls);
+        assertEquals(3, http.calls);
         List<AssistantProgressMessage> progressMessages = result.messages().stream()
                 .filter(AssistantProgressMessage.class::isInstance)
                 .map(AssistantProgressMessage.class::cast)
@@ -279,35 +326,110 @@ class AnthropicAgentLoopSemanticsTest {
                         || message.content().contains("hit max_tokens"))
                 .toList();
         assertEquals(2, continuationPrompts.size());
-        AssistantMessage finalMessage = assertInstanceOf(AssistantMessage.class, result.messages().getLast());
+        AssistantMessage finalMessage =
+                assertInstanceOf(AssistantMessage.class, result.messages().getLast());
         assertEquals("recovered", finalMessage.content());
     }
 
     @Test
     void fixtureReturnsProviderNeutralModelErrorWithoutAssistantFinal() {
         ToolRegistry registry = registry(new EchoTool(false));
-        SequenceTransport transport = new SequenceTransport(
-                new AnthropicTransport.Response(429, Map.of(), """
-                        {"error":{"message":"rate limited"}}
-                        """)
-        );
-        AgentLoop loop = new AgentLoop(new AnthropicModelAdapter(config(), registry, transport, 0),
-                AgentEventSink.noOp(), registry);
+        SequenceHttpClientBuilder http =
+                new SequenceHttpClientBuilder(error(429, "rate limited"));
+        AgentLoop loop = new AgentLoop(adapter(registry, http), AgentEventSink.noOp(), registry);
 
         AgentTurnResult result = loop.runTurn(request(List.of(new UserMessage("hi"))));
 
         assertEquals(AgentTurnStopReason.MODEL_ERROR, result.stopReason());
+        assertEquals(3, http.calls);
         assertEquals(1, result.messages().size());
         assertFalse(result.messages().stream().anyMatch(AssistantMessage.class::isInstance));
-        ModelErrorDetails details = assertInstanceOf(ModelErrorDetails.class, result.stopDetails().orElseThrow());
+        ModelErrorDetails details =
+                assertInstanceOf(ModelErrorDetails.class, result.stopDetails().orElseThrow());
         assertTrue(details.error().retryable());
         assertEquals(TurnErrorSource.MODEL, details.error().source());
         assertEquals(Optional.of(ModelRequestException.class.getName()), details.error().causeClass());
         assertTrue(details.error().diagnostics().orElseThrow().contains("statusCode=429"));
     }
 
-    private static AnthropicTransport.Response ok(String body) {
-        return new AnthropicTransport.Response(200, Map.of(), body);
+    private static LangChain4jModelAdapter adapter(ToolRegistry registry,
+                                                   SequenceHttpClientBuilder http) {
+        return new LangChain4jModelAdapter(
+                config(),
+                registry,
+                1_024,
+                (runtimeConfig, maxOutputTokens, requestContext) -> {
+                    String credential = runtimeConfig.authToken()
+                            .or(() -> runtimeConfig.apiKey())
+                            .orElseThrow();
+                    return AnthropicChatModel.builder()
+                            .httpClientBuilder(new ProviderCompatibilityHttpClientBuilder(
+                                    http,
+                                    requestContext,
+                                    runtimeConfig.authToken()))
+                            .baseUrl(ChatModelFactory.normalizeV1BaseUrl(
+                                    runtimeConfig.baseUrl()))
+                            .apiKey(credential)
+                            .modelName(runtimeConfig.model())
+                            .maxTokens(maxOutputTokens)
+                            .timeout(runtimeConfig.providerTimeout())
+                            .maxRetries(0)
+                            .returnThinking(true)
+                            .sendThinking(true)
+                            .build();
+                },
+                new MessageMapper(),
+                new ToolSpecificationMapper(),
+                new ResponseMapper(),
+                new ProviderExceptionMapper());
+    }
+
+    private static void assertMultiToolRequestShape(JsonNode providerMessages) {
+        assertEquals("user", providerMessages.get(0).path("role").asText());
+        assertEquals("assistant", providerMessages.get(1).path("role").asText());
+        assertEquals("tool_use",
+                providerMessages.get(1).path("content").get(0).path("type").asText());
+        assertEquals("tool_use",
+                providerMessages.get(1).path("content").get(1).path("type").asText());
+        assertEquals("tool-1",
+                providerMessages.get(1).path("content").get(0).path("id").asText());
+        assertEquals("tool-2",
+                providerMessages.get(1).path("content").get(1).path("id").asText());
+        assertEquals("user", providerMessages.get(2).path("role").asText());
+        assertEquals("tool_result",
+                providerMessages.get(2).path("content").get(0).path("type").asText());
+        assertEquals("tool_result",
+                providerMessages.get(2).path("content").get(1).path("type").asText());
+        assertEquals("tool-1",
+                providerMessages.get(2).path("content").get(0).path("tool_use_id").asText());
+        assertEquals("tool-2",
+                providerMessages.get(2).path("content").get(1).path("tool_use_id").asText());
+    }
+
+    private static StubResponse ok(String body) {
+        return new StubResponse(200, body, "");
+    }
+
+    private static StubResponse error(int statusCode, String message) {
+        return new StubResponse(
+                statusCode,
+                "{\"error\":{\"message\":\"" + message + "\"}}",
+                message);
+    }
+
+    private static StubResponse emptyResponse(String id) {
+        return ok("""
+                {
+                  "id": "%s",
+                  "type": "message",
+                  "role": "assistant",
+                  "model": "claude-test",
+                  "stop_reason": "end_turn",
+                  "stop_sequence": null,
+                  "content": [],
+                  "usage": {"input_tokens": 0, "output_tokens": 0}
+                }
+                """.formatted(id));
     }
 
     private static RuntimeConfig config() {
@@ -317,7 +439,7 @@ class AnthropicAgentLoopSemanticsTest {
                 "https://anthropic.example",
                 Optional.of("test-key"),
                 Optional.empty(),
-                Optional.of(1024),
+                Optional.of(1_024),
                 Optional.of(160),
                 "test"
         );
@@ -364,7 +486,8 @@ class AnthropicAgentLoopSemanticsTest {
             return JsonNodeFactory.instance.objectNode()
                     .put("type", "object")
                     .set("properties", JsonNodeFactory.instance.objectNode()
-                            .set("text", JsonNodeFactory.instance.objectNode().put("type", "string")));
+                            .set("text", JsonNodeFactory.instance.objectNode()
+                                    .put("type", "string")));
         }
 
         @Override
@@ -383,36 +506,79 @@ class AnthropicAgentLoopSemanticsTest {
         }
     }
 
-    private static final class SequenceTransport implements AnthropicTransport {
-        private final List<AnthropicTransport.Response> responses;
+    private static final class SequenceHttpClientBuilder implements HttpClientBuilder {
+        private final List<StubResponse> responses;
+        private final List<JsonNode> requestBodies = new ArrayList<>();
+        private Duration connectTimeout = Duration.ofSeconds(10);
+        private Duration readTimeout = Duration.ofSeconds(10);
         private int calls;
 
-        private SequenceTransport(AnthropicTransport.Response... responses) {
+        private SequenceHttpClientBuilder(StubResponse... responses) {
+            if (responses.length == 0) {
+                throw new IllegalArgumentException("At least one response is required");
+            }
             this.responses = List.of(responses);
         }
 
         @Override
-        public AnthropicTransport.Response post(String url, Map<String, String> headers, JsonNode requestBody) {
-            calls++;
-            return responses.get(Math.min(calls - 1, responses.size() - 1));
+        public Duration connectTimeout() {
+            return connectTimeout;
+        }
+
+        @Override
+        public HttpClientBuilder connectTimeout(Duration timeout) {
+            connectTimeout = timeout;
+            return this;
+        }
+
+        @Override
+        public Duration readTimeout() {
+            return readTimeout;
+        }
+
+        @Override
+        public HttpClientBuilder readTimeout(Duration timeout) {
+            readTimeout = timeout;
+            return this;
+        }
+
+        @Override
+        public HttpClient build() {
+            return new SequenceHttpClient();
+        }
+
+        private final class SequenceHttpClient implements HttpClient {
+            @Override
+            public SuccessfulHttpResponse execute(HttpRequest request) {
+                StubResponse response;
+                synchronized (SequenceHttpClientBuilder.this) {
+                    try {
+                        requestBodies.add(MAPPER.readTree(request.body()).deepCopy());
+                    } catch (Exception exception) {
+                        throw new IllegalStateException("Expected a JSON request body", exception);
+                    }
+                    response = responses.get(Math.min(calls, responses.size() - 1));
+                    calls++;
+                }
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new HttpException(response.statusCode(), response.errorMessage());
+                }
+                return SuccessfulHttpResponse.builder()
+                        .statusCode(response.statusCode())
+                        .headers(Map.of("content-type", List.of("application/json")))
+                        .body(response.body())
+                        .build();
+            }
+
+            @Override
+            public void execute(HttpRequest request, ServerSentEventParser parser,
+                                ServerSentEventListener listener) {
+                throw new UnsupportedOperationException("Streaming is not used by this fixture");
+            }
         }
     }
 
-    private static final class RecordingSequenceTransport implements AnthropicTransport {
-        private final List<AnthropicTransport.Response> responses;
-        private final List<JsonNode> requestBodies = new ArrayList<>();
-        private int calls;
-
-        private RecordingSequenceTransport(AnthropicTransport.Response... responses) {
-            this.responses = List.of(responses);
-        }
-
-        @Override
-        public AnthropicTransport.Response post(String url, Map<String, String> headers, JsonNode requestBody) {
-            requestBodies.add(requestBody.deepCopy());
-            calls++;
-            return responses.get(Math.min(calls - 1, responses.size() - 1));
-        }
+    private record StubResponse(int statusCode, String body, String errorMessage) {
     }
 
     private static final class RecordingEventSink implements AgentEventSink {

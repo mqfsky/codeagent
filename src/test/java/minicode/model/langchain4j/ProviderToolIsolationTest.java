@@ -1,15 +1,19 @@
-package minicode.agent.runtime;
+package minicode.model.langchain4j;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import minicode.agent.model.AgentRunMode;
 import minicode.agent.model.AgentType;
+import minicode.agent.runtime.AgentSpec;
+import minicode.agent.runtime.ChildToolRegistryFactory;
 import minicode.config.ProviderKind;
 import minicode.config.RuntimeConfig;
+import minicode.core.loop.ModelAdapter;
 import minicode.core.message.UserMessage;
-import minicode.model.anthropic.AnthropicModelAdapter;
-import minicode.model.anthropic.AnthropicTransport;
-import minicode.model.openai.OpenAIModelAdapter;
 import minicode.tools.api.Tool;
 import minicode.tools.api.ToolCall;
 import minicode.tools.api.ToolContext;
@@ -20,23 +24,22 @@ import minicode.tools.metadata.ToolOrigin;
 import minicode.tools.metadata.ToolStatus;
 import minicode.tools.registry.ToolRegistry;
 import minicode.tools.result.ToolResult;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
-import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.StreamSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProviderToolIsolationTest {
-    @Test
-    void openAiAndAnthropicSchemasUseTheSameFilteredRegistryAsExecution() throws Exception {
+    @ParameterizedTest
+    @EnumSource(value = ProviderKind.class, names = {"ANTHROPIC", "OPENAI_COMPATIBLE"})
+    void forkBuildsEachRequestFromItsOwnFilteredRegistry(ProviderKind provider) {
         ToolRegistry parent = new ToolRegistry();
         parent.register(tool("read_file", ToolOrigin.BUILTIN, ToolCapability.READ));
         parent.register(tool("write_file", ToolOrigin.BUILTIN, ToolCapability.WRITE));
@@ -47,32 +50,49 @@ class ProviderToolIsolationTest {
         ToolRegistry child = new ChildToolRegistryFactory().create(
                 parent, AgentSpec.forType(AgentType.EXPLORE), AgentRunMode.BACKGROUND);
 
-        OpenAIModelAdapter openAi = (OpenAIModelAdapter) new OpenAIModelAdapter(
-                config(ProviderKind.OPENAI_COMPATIBLE), parent).fork(child);
-        Method buildTools = OpenAIModelAdapter.class.getDeclaredMethod("buildTools");
-        buildTools.setAccessible(true);
-        JsonNode openAiTools = (JsonNode) buildTools.invoke(openAi);
-        assertEquals(List.of("read_file", "run_command", "mcp__server__tool"), StreamSupport.stream(openAiTools.spliterator(), false)
-                .map(node -> node.at("/function/name").asText()).toList());
+        List<List<String>> requestToolNames = new ArrayList<>();
+        LangChain4jModelAdapter.ModelFactory recordingFactory =
+                (config, maxOutputTokens, requestContext) -> recordingModel(requestToolNames);
+        LangChain4jModelAdapter parentAdapter = new LangChain4jModelAdapter(
+                config(provider),
+                parent,
+                4_096,
+                recordingFactory,
+                new MessageMapper(),
+                new ToolSpecificationMapper(),
+                new ResponseMapper(),
+                new ProviderExceptionMapper());
+        ModelAdapter childAdapter = parentAdapter.fork(child);
 
-        AtomicReference<JsonNode> anthropicBody = new AtomicReference<>();
-        AnthropicTransport transport = (url, headers, requestBody) -> {
-            anthropicBody.set(requestBody);
-            return new AnthropicTransport.Response(200, Map.of(),
-                    "{\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}");
-        };
-        AnthropicModelAdapter anthropic = (AnthropicModelAdapter) new AnthropicModelAdapter(
-                config(ProviderKind.ANTHROPIC), parent, transport).fork(child);
-        anthropic.next(List.of(new UserMessage("inspect")));
-        assertEquals(List.of("read_file", "run_command", "mcp__server__tool"), StreamSupport.stream(
-                        anthropicBody.get().get("tools").spliterator(), false)
-                .map(node -> node.get("name").asText()).toList());
+        parentAdapter.next(List.of(new UserMessage("inspect parent")));
+        childAdapter.next(List.of(new UserMessage("inspect child")));
+
+        assertEquals(List.of(
+                        "read_file", "write_file", "run_command",
+                        "ask_user", "agent", "mcp__server__tool"),
+                requestToolNames.get(0));
+        assertEquals(List.of("read_file", "run_command", "mcp__server__tool"),
+                requestToolNames.get(1));
 
         ToolResult blockedExecution = child.execute(
                 new ToolCall("write", "write_file", JsonNodeFactory.instance.objectNode()),
                 new ToolContext(Path.of("."), "session", Optional.of("turn"), Optional.of("write")));
         assertTrue(blockedExecution.error());
         assertEquals("Unknown tool: write_file", blockedExecution.content());
+    }
+
+    private static ChatModel recordingModel(List<List<String>> requestToolNames) {
+        return new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                requestToolNames.add(request.toolSpecifications().stream()
+                        .map(specification -> specification.name())
+                        .toList());
+                return ChatResponse.builder()
+                        .aiMessage(AiMessage.from("done"))
+                        .build();
+            }
+        };
     }
 
     private static RuntimeConfig config(ProviderKind provider) {

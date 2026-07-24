@@ -13,6 +13,7 @@ import minicode.core.message.UserMessage;
 import minicode.core.turn.AgentTurnRequest;
 import minicode.core.turn.AgentTurnResult;
 import minicode.core.turn.AgentTurnStopReason;
+import minicode.model.langchain4j.LangChain4jModelAdapter;
 import minicode.tools.api.Tool;
 import minicode.tools.api.ToolContext;
 import minicode.tools.api.ValidationResult;
@@ -55,7 +56,10 @@ class AnthropicProviderSmokeTest {
                 Optional.empty(),
                 "smoke"
         );
-        AgentLoop loop = new AgentLoop(new AnthropicModelAdapter(config, registry), AgentEventSink.noOp(), registry);
+        AgentLoop loop = new AgentLoop(
+                new LangChain4jModelAdapter(config, registry, Optional.empty()),
+                AgentEventSink.noOp(),
+                registry);
 
         AgentTurnResult result = loop.runTurn(new AgentTurnRequest(
                 "anthropic-smoke-turn",

@@ -24,9 +24,9 @@ import minicode.core.message.SystemMessage;
 import minicode.core.message.ToolResultMessage;
 import minicode.core.message.UserMessage;
 import minicode.model.MockModelAdapter;
-import minicode.model.anthropic.AnthropicModelAdapter;
 import minicode.model.anthropic.AnthropicModelsApiClient;
 import minicode.model.anthropic.HttpAnthropicTransport;
+import minicode.model.langchain4j.LangChain4jModelAdapter;
 import minicode.mcp.McpRuntime;
 import minicode.permissions.api.PermissionPromptHandler;
 import minicode.permissions.api.PermissionService;
@@ -638,7 +638,7 @@ class ApplicationServicesTest {
                 PermissionPromptHandler.unavailable()
         );
 
-        assertInstanceOf(AnthropicModelAdapter.class, services.modelAdapter());
+        assertInstanceOf(LangChain4jModelAdapter.class, services.modelAdapter());
     }
 
     @Test

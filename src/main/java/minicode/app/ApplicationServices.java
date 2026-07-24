@@ -37,10 +37,9 @@ import minicode.model.MockModelAdapter;
 import minicode.model.ModelContextProfile;
 import minicode.model.ModelMetadata;
 import minicode.model.ModelMetadataResolver;
-import minicode.model.anthropic.AnthropicModelAdapter;
 import minicode.model.anthropic.AnthropicModelsApiClient;
 import minicode.model.anthropic.HttpAnthropicTransport;
-import minicode.model.openai.OpenAIModelAdapter;
+import minicode.model.langchain4j.LangChain4jModelAdapter;
 import minicode.init.ProjectInitializer;
 import minicode.mcp.McpRuntime;
 import minicode.mcp.McpServerSummary;
@@ -726,12 +725,10 @@ public record ApplicationServices(ToolRegistry toolRegistry,
             if (runtimeConfig.provider() == ProviderKind.MOCK) {
                 return new MockModelAdapter("mock final");
             }
-            if (runtimeConfig.provider() == ProviderKind.OPENAI_COMPATIBLE) {
-                return new OpenAIModelAdapter(runtimeConfig, actualTools);
-            }
-            return new AnthropicModelAdapter(runtimeConfig, actualTools,
-                    new HttpAnthropicTransport(java.net.http.HttpClient.newHttpClient(),
-                            runtimeConfig.providerTimeout()),
+
+            // 生产 Provider 统一走 LangChain4j 低层 ChatModel；这里只替换模型适配层，
+            // 解析出的模型输出上限和当前 Agent 的 ToolRegistry 仍由原 Runtime 注入。
+            return new LangChain4jModelAdapter(runtimeConfig, actualTools,
                     Optional.of(resolveModelContextProfile(runtimeConfig, actualMetadata)
                             .resolvedMaxOutputTokens()));
         }
